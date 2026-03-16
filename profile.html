@@ -1,0 +1,172 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8"/>
+<meta name="viewport" content="width=device-width, initial-scale=1.0"/>
+<title>MOVIEZ — My Profile</title>
+<link rel="preconnect" href="https://fonts.googleapis.com"/>
+<link href="https://fonts.googleapis.com/css2?family=DM+Sans:wght@300;400;500&display=swap" rel="stylesheet"/>
+<link rel="stylesheet" href="main.css"/>
+<script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
+</head>
+<body>
+<div id="toast" class="toast"></div>
+
+<nav class="nav">
+  <div class="logo">MOVIE<span>Z</span></div>
+  <div class="nav-right">
+    <button class="action-btn" style="flex:none;padding:6px 14px;font-size:12px" onclick="window.location.href='rankings.html'">Rankings</button>
+    <div class="avatar" id="nav-avatar">?</div>
+  </div>
+</nav>
+
+<main>
+  <div class="tab-row">
+    <button class="tab active" onclick="switchTab('profile', this)">My profile</button>
+    <button class="tab" onclick="switchTab('history', this)">Quiz history</button>
+  </div>
+
+  <div class="pane active" id="pane-profile">
+    <div class="loading"><div class="loading-dot"></div><p>Loading your profile...</p></div>
+  </div>
+
+  <div class="pane" id="pane-history">
+    <div class="loading"><div class="loading-dot"></div><p>Loading quiz history...</p></div>
+  </div>
+</main>
+
+<script src="supabase.js"></script>
+<script>
+let currentUser   = null;
+let currentProfile = null;
+
+async function init() {
+  const auth = await requireAuth();
+  if (!auth) return;
+  currentUser    = auth.user;
+  currentProfile = auth.profile;
+  document.getElementById('nav-avatar').textContent = (currentProfile?.username || '?').slice(0,2).toUpperCase();
+  renderProfile();
+  loadQuizHistory();
+}
+
+function renderProfile() {
+  const p = currentProfile;
+  if (!p) return;
+  const watched = p.total_watched  || 0;
+  const streak  = p.streak_count   || 0;
+  const stars   = p.stars_earned   || 0;
+  const rank    = getRank(watched);
+  const joined  = new Date(p.joined_date || Date.now()).toLocaleDateString('en-GB', { month: 'long', year: 'numeric' });
+  const initials = p.username.slice(0,2).toUpperCase();
+
+  const days = ['Mon','Tue','Wed','Thu','Fri','Sat','Sun'];
+  const today = new Date().getDay();
+  const todayIdx = today === 0 ? 6 : today - 1;
+  const streakDots = days.map((d, i) => {
+    const cls = i < todayIdx ? 'done' : i === todayIdx ? 'today' : '';
+    const check = cls ? `<svg width="12" height="12" viewBox="0 0 12 12" fill="none"><polyline points="2,6 5,9 10,3" stroke="${cls==='today'?'#fff':'#C0392B'}" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"/></svg>` : '';
+    return `<div class="streak-day"><div class="streak-dot ${cls}">${check}</div><div class="streak-day-label${cls==='today'?' today-label-day':''}">${d}</div></div>`;
+  }).join('');
+
+  const rankDefs = [
+    {name:'Newbie',min:0,max:9},{name:'Movie Watcher',min:10,max:19},
+    {name:'Movie Buff',min:20,max:29},{name:'Movie Freak',min:30,max:49},
+    {name:'Cinephile',min:50,max:99},{name:'Cinéaste',min:100,max:9999}
+  ];
+  const rankListHtml = rankDefs.map((r,i) => {
+    let barCls='rank-bar', nameCls='rank-name', w='0%';
+    if (watched > r.max)     { barCls='rank-bar done';    nameCls='rank-name done';    w='100%'; }
+    else if (watched >= r.min){ barCls='rank-bar current'; nameCls='rank-name current'; w=Math.round(((watched-r.min)/(r.max-r.min+1))*100)+'%'; }
+    return `<div class="rank-item"><span class="rank-n">${i+1}</span><div class="rank-bar-wrap"><div class="${barCls}" style="width:${w}"></div></div><span class="${nameCls}">${r.name}</span><span class="rank-movies">${r.min===100?'100+':r.min===0?'1–9':r.min}</span></div>`;
+  }).join('');
+  const next = rankDefs.find(r => watched < r.min);
+
+  document.getElementById('pane-profile').innerHTML = `
+  <div class="profile-hero">
+    <div class="profile-top">
+      <div class="avatar-lg">${initials}</div>
+      <div>
+        <div class="profile-name">${escHtml(p.username)}</div>
+        <div class="profile-join">Member since ${joined}</div>
+        <div class="rank-badge-lg">${rank}</div>
+      </div>
+    </div>
+    <div class="stats-grid">
+      <div class="stat-card"><div class="stat-val">${watched}</div><div class="stat-label">Films watched</div></div>
+      <div class="stat-card"><div class="stat-val">${streak}</div><div class="stat-label">Day streak</div></div>
+      <div class="stat-card"><div class="stat-val">${stars}</div><div class="stat-label">Stars earned</div></div>
+    </div>
+  </div>
+
+  <div class="block">
+    <div class="block-title">This week's streak</div>
+    <div class="streak-row">${streakDots}</div>
+    <div class="streak-count"><span class="streak-num">${streak}</span><span class="streak-text">day streak — keep it going</span></div>
+  </div>
+
+  <div class="block">
+    <div class="block-title">Rank journey</div>
+    <div class="rank-list">${rankListHtml}</div>
+    ${next ? `<div class="rank-next">${next.min - watched} more films to reach <span style="color:var(--red)">${next.name}</span></div>` : '<div class="rank-next" style="color:var(--gold)">You have reached the highest rank — Cinéaste!</div>'}
+  </div>
+
+  <button class="action-btn" style="width:100%;margin-bottom:10px" onclick="shareProfile()">Share my profile</button>
+  <button class="action-btn" style="width:100%;color:#eb5757;border-color:#7d2e2e" onclick="doLogout()">Sign out</button>`;
+}
+
+async function loadQuizHistory() {
+  if (!currentUser) return;
+  const { data } = await sb.from('quiz_results')
+    .select('*, movies(title)')
+    .eq('user_id', currentUser.id)
+    .order('created_at', { ascending: false })
+    .limit(30);
+
+  const pane = document.getElementById('pane-history');
+  if (!data || data.length === 0) {
+    pane.innerHTML = `<div class="no-comments" style="padding:40px 0">No quiz results yet — finish today's film to get started!</div>`;
+    return;
+  }
+  const starMovies = data.filter(r => r.perfect);
+  pane.innerHTML = `
+  ${starMovies.length ? `
+  <div class="block">
+    <div class="block-title">Stars earned</div>
+    <div class="stars-grid">${starMovies.map(r => `<div class="star-chip">★ ${escHtml(r.movies?.title||'')}</div>`).join('')}</div>
+  </div>` : ''}
+  <div class="block">
+    <div class="block-title">All quiz results</div>
+    ${data.map(r => `<div class="rank-item">
+      <div style="flex:1;font-size:13px;color:var(--text)">${escHtml(r.movies?.title||'Unknown')}</div>
+      <div style="font-size:13px;font-weight:500;color:${r.perfect?'var(--gold)':r.score>=3?'#6fcf97':'var(--text-hint)'}">${r.score}/5${r.perfect?' ★':''}</div>
+    </div>`).join('')}
+  </div>`;
+}
+
+function shareProfile() {
+  if (navigator.share) {
+    navigator.share({ title: 'MOVIEZ', text: `Check out my MOVIEZ profile — I'm a ${getRank(currentProfile?.total_watched||0)}!`, url: window.location.href });
+  } else {
+    navigator.clipboard.writeText(window.location.href);
+    toast('Link copied!');
+  }
+}
+
+async function doLogout() {
+  if (!confirm('Sign out of MOVIEZ?')) return;
+  await sb.auth.signOut();
+  window.location.href = 'login.html';
+}
+
+function switchTab(name, el) {
+  document.querySelectorAll('.tab').forEach(t => t.classList.remove('active'));
+  document.querySelectorAll('.pane').forEach(p => p.classList.remove('active'));
+  el.classList.add('active');
+  document.getElementById('pane-' + name).classList.add('active');
+}
+
+init();
+</script>
+</body>
+</html>

@@ -1,0 +1,178 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8"/>
+<meta name="viewport" content="width=device-width, initial-scale=1.0"/>
+<title>MOVIEZ — Daily Quiz</title>
+<link rel="preconnect" href="https://fonts.googleapis.com"/>
+<link href="https://fonts.googleapis.com/css2?family=DM+Sans:wght@300;400;500&display=swap" rel="stylesheet"/>
+<link rel="stylesheet" href="main.css"/>
+<script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
+</head>
+<body>
+<div id="toast" class="toast"></div>
+
+<nav class="nav">
+  <a class="back-btn" href="index.html">‹ Back to film</a>
+  <div class="logo">MOVIE<span>Z</span></div>
+  <div style="width:100px"></div>
+</nav>
+
+<main>
+  <div id="quiz-body">
+    <div class="quiz-header">
+      <div class="today-label">Quick quiz</div>
+      <h2 class="quiz-title">How well did you watch?</h2>
+      <p class="quiz-sub">5 questions · Get all 5 right to earn a star</p>
+    </div>
+    <div class="progress-row">
+      <div class="prog-step active" id="p0"></div>
+      <div class="prog-step" id="p1"></div>
+      <div class="prog-step" id="p2"></div>
+      <div class="prog-step" id="p3"></div>
+      <div class="prog-step" id="p4"></div>
+      <span class="prog-label" id="prog-label">1 / 5</span>
+    </div>
+    <div class="question-card">
+      <div class="q-number" id="q-number">Question 1 of 5</div>
+      <div class="q-text" id="q-text"></div>
+      <div class="options" id="options-list"></div>
+    </div>
+    <div class="quiz-nav">
+      <button class="skip-btn" onclick="qSkip()">Skip</button>
+      <button class="next-btn" id="btn-next" disabled onclick="qNext()">Next question</button>
+    </div>
+  </div>
+
+  <div id="result-screen" style="display:none">
+    <div class="result-wrap">
+      <div class="result-icon" id="res-icon"></div>
+      <h2 class="result-title" id="res-title"></h2>
+      <p class="result-sub" id="res-sub"></p>
+      <div class="score-dots" id="score-dots"></div>
+      <div id="star-block"></div>
+      <button class="done-btn" onclick="window.location.href='profile.html'">View my profile</button>
+      <button class="action-btn" style="margin-top:10px;width:100%" onclick="window.location.href='index.html'">Back to discussion</button>
+    </div>
+  </div>
+</main>
+
+<script src="supabase.js"></script>
+<script>
+let currentUser = null;
+let currentProfile = null;
+let qCur = 0, qSel = null, qAns = [];
+
+const Q = [
+  { q: "What is the name of the wealthy family the Kims infiltrate?", opts: ["The Parks","The Lees","The Chois","The Ohms"], ans: 0 },
+  { q: "What does Mr. Park find deeply offensive throughout the film?", opts: ["Ki-woo's painting","Ki-taek's smell","The scholar's rock","The basement phone"], ans: 1 },
+  { q: "Where does the housekeeper's husband secretly live for years?", opts: ["In the attic","In the garden shed","In the basement bunker","In a rented flat nearby"], ans: 2 },
+  { q: "What does the scholar's rock symbolise according to Ki-woo's friend?", opts: ["Hard work","Bringing wealth to its owner","Family loyalty","The weight of poverty"], ans: 1 },
+  { q: "Who directed Parasite?", opts: ["Park Chan-wook","Lee Chang-dong","Kim Jee-woon","Bong Joon-ho"], ans: 3 }
+];
+
+async function init() {
+  const auth = await requireAuth();
+  if (!auth) return;
+  currentUser = auth.user;
+  currentProfile = auth.profile;
+  renderQ();
+}
+
+function renderQ() {
+  const q = Q[qCur];
+  document.getElementById('q-number').textContent = 'Question ' + (qCur + 1) + ' of 5';
+  document.getElementById('q-text').textContent = q.q;
+  document.getElementById('prog-label').textContent = (qCur + 1) + ' / 5';
+  for (let i = 0; i < 5; i++) {
+    const p = document.getElementById('p' + i);
+    if (p) p.className = 'prog-step' + (i < qCur ? ' done' : i === qCur ? ' active' : '');
+  }
+  const list = document.getElementById('options-list');
+  list.innerHTML = '';
+  q.opts.forEach((o, i) => {
+    const d = document.createElement('div');
+    d.className = 'option';
+    d.innerHTML = `<div class="option-letter">${['A','B','C','D'][i]}</div><span>${escHtml(o)}</span>`;
+    d.onclick = () => qSelect(i, d);
+    list.appendChild(d);
+  });
+  qSel = null;
+  document.getElementById('btn-next').disabled = true;
+}
+
+function qSelect(i, el) {
+  if (qSel !== null) return;
+  qSel = i;
+  document.querySelectorAll('.option').forEach(o => o.classList.remove('selected'));
+  el.classList.add('selected');
+  document.getElementById('btn-next').disabled = false;
+}
+
+function qSkip() { qAns.push(null); qAdvance(); }
+
+function qNext() {
+  if (qSel === null) return;
+  const correct = Q[qCur].ans;
+  const opts = document.querySelectorAll('.option');
+  opts[qSel].classList.remove('selected');
+  opts[qSel].classList.add(qSel === correct ? 'correct' : 'wrong');
+  if (qSel !== correct) opts[correct].classList.add('correct');
+  qAns.push(qSel === correct);
+  document.getElementById('btn-next').disabled = true;
+  setTimeout(() => qAdvance(), 700);
+}
+
+function qAdvance() {
+  qCur++;
+  if (qCur >= Q.length) { showResult(); } else { renderQ(); }
+}
+
+async function showResult() {
+  document.getElementById('quiz-body').style.display = 'none';
+  document.getElementById('result-screen').style.display = 'block';
+
+  const score  = qAns.filter(Boolean).length;
+  const perfect = score === 5;
+  const movieId    = localStorage.getItem('moviez_today_movie_id');
+  const movieTitle = localStorage.getItem('moviez_today_movie_title') || 'today\'s film';
+
+  const dots = qAns.map(a => `<div class="score-dot${a ? ' hit' : ''}">${a ? '✓' : '✗'}</div>`).join('');
+  document.getElementById('score-dots').innerHTML = dots;
+
+  if (perfect) {
+    document.getElementById('res-icon').className = 'result-icon perfect';
+    document.getElementById('res-icon').textContent = '★';
+    document.getElementById('res-title').textContent = 'Perfect score!';
+    document.getElementById('res-sub').textContent = 'You watched every detail. A star has been added to your profile.';
+    document.getElementById('star-block').innerHTML = `
+      <div class="star-earned">
+        <div class="star-icon">★</div>
+        <div><div class="star-text">Star earned — ${escHtml(movieTitle)}</div>
+        <div class="star-sub">Added to your profile</div></div>
+      </div>`;
+  } else if (score >= 3) {
+    document.getElementById('res-icon').className = 'result-icon good';
+    document.getElementById('res-icon').textContent = score + '/5';
+    document.getElementById('res-title').textContent = 'Nice watching!';
+    document.getElementById('res-sub').textContent = 'You got ' + score + ' out of 5. Get all 5 next time to earn your star.';
+  } else {
+    document.getElementById('res-icon').className = 'result-icon ok';
+    document.getElementById('res-icon').textContent = score + '/5';
+    document.getElementById('res-title').textContent = 'Keep at it!';
+    document.getElementById('res-sub').textContent = 'You got ' + score + ' out of 5. Watch a little closer next time.';
+  }
+
+  if (currentUser && movieId) {
+    await sb.from('quiz_results').upsert(
+      { user_id: currentUser.id, movie_id: movieId, score, perfect },
+      { onConflict: 'user_id,movie_id' }
+    );
+    currentProfile = await updateStreak(currentUser.id, currentProfile, perfect);
+  }
+}
+
+init();
+</script>
+</body>
+</html>

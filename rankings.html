@@ -1,0 +1,199 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8"/>
+<meta name="viewport" content="width=device-width, initial-scale=1.0"/>
+<title>MOVIEZ — Rankings</title>
+<link rel="preconnect" href="https://fonts.googleapis.com"/>
+<link href="https://fonts.googleapis.com/css2?family=DM+Sans:wght@300;400;500&display=swap" rel="stylesheet"/>
+<link rel="stylesheet" href="main.css"/>
+<script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
+</head>
+<body>
+<div id="toast" class="toast"></div>
+
+<nav class="nav">
+  <a class="back-btn" href="index.html">‹ Home</a>
+  <div class="logo">MOVIE<span>Z</span></div>
+  <div style="width:80px"></div>
+</nav>
+
+<main>
+  <div class="tab-row">
+    <button class="tab active" onclick="switchTab('monthly', this)">Monthly</button>
+    <button class="tab" onclick="switchTab('streaks', this)">Streaks</button>
+    <button class="tab" onclick="switchTab('community', this)">Community</button>
+  </div>
+
+  <div class="pane active" id="pane-monthly">
+    <div class="loading"><div class="loading-dot"></div><p>Loading rankings...</p></div>
+  </div>
+  <div class="pane" id="pane-streaks">
+    <div class="loading"><div class="loading-dot"></div><p>Loading streaks...</p></div>
+  </div>
+  <div class="pane" id="pane-community">
+    <div class="loading"><div class="loading-dot"></div><p>Loading community stats...</p></div>
+  </div>
+</main>
+
+<script src="supabase.js"></script>
+<script>
+let currentUser    = null;
+let currentProfile = null;
+const posClasses   = ['gold','silver','bronze'];
+
+async function init() {
+  const auth = await requireAuth();
+  if (!auth) return;
+  currentUser    = auth.user;
+  currentProfile = auth.profile;
+  loadMonthly();
+  loadStreaks();
+  loadCommunity();
+}
+
+async function loadMonthly() {
+  const pane = document.getElementById('pane-monthly');
+  const now  = new Date();
+  const monthStart = new Date(now.getFullYear(), now.getMonth(), 1).toISOString();
+  const monthEnd   = new Date(now.getFullYear(), now.getMonth() + 1, 0, 23, 59, 59).toISOString();
+
+  const { data } = await sb.from('quiz_results')
+    .select('user_id, profiles(username, total_watched)')
+    .gte('created_at', monthStart).lte('created_at', monthEnd);
+
+  const counts = {};
+  (data || []).forEach(r => {
+    const uid = r.user_id;
+    if (!counts[uid]) counts[uid] = { username: r.profiles?.username || '?', watched: r.profiles?.total_watched || 0, count: 0 };
+    counts[uid].count++;
+  });
+  const sorted = Object.values(counts).sort((a, b) => b.count - a.count).slice(0, 10);
+  const myPos  = sorted.findIndex(c => c.username === currentProfile?.username);
+
+  pane.innerHTML = `
+  <div class="community-banner">
+    <div class="banner-icon"><svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="#C0392B" stroke-width="1.5" stroke-linecap="round"><path d="M17 21v-2a4 4 0 0 0-4-4H5a4 4 0 0 0-4 4v2"/><circle cx="9" cy="7" r="4"/><path d="M23 21v-2a4 4 0 0 0-3-3.87"/><path d="M16 3.13a4 4 0 0 1 0 7.75"/></svg></div>
+    <div class="banner-text"><strong>${sorted.length} people</strong> active this month — you're all in this together</div>
+  </div>
+  <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:14px">
+    <div style="font-size:15px;font-weight:500">${now.toLocaleString('default',{month:'long'})} ${now.getFullYear()}</div>
+  </div>
+  <div class="lb-section-label">Top this month</div>
+  <div class="lb-list">
+    ${sorted.length ? sorted.map((u, i) => {
+      const isMe = u.username === currentProfile?.username;
+      return `<div class="lb-item${isMe?' me':''}">
+        <div class="lb-pos ${posClasses[i]||''}">${i+1}</div>
+        <div class="lb-av${isMe?' me':''}">${u.username.slice(0,2).toUpperCase()}</div>
+        <div class="lb-info">
+          <div class="lb-name">${escHtml(u.username)}${isMe?' <span style="font-size:11px;color:#C0392B">(you)</span>':''}</div>
+          <div class="lb-meta"><span class="lb-badge${isMe?' me':''}">${getRank(u.watched)}</span></div>
+        </div>
+        <div class="lb-score"><div class="lb-val">${u.count}</div><div class="lb-val-label">films</div></div>
+      </div>`;
+    }).join('') : '<div class="no-comments">No activity yet this month — be the first!</div>'}
+  </div>
+  ${myPos === -1 && currentProfile ? `
+  <div class="lb-section-label">Your spot</div>
+  <div class="lb-list"><div class="lb-item me">
+    <div class="lb-pos" style="color:#C0392B">-</div>
+    <div class="lb-av me">${currentProfile.username.slice(0,2).toUpperCase()}</div>
+    <div class="lb-info"><div class="lb-name">${escHtml(currentProfile.username)} <span style="font-size:11px;color:#C0392B">(you)</span></div></div>
+    <div class="lb-score"><div class="lb-val">0</div><div class="lb-val-label">films</div></div>
+  </div></div>` : ''}`;
+}
+
+async function loadStreaks() {
+  const pane = document.getElementById('pane-streaks');
+  const { data } = await sb.from('profiles')
+    .select('username, streak_count, total_watched')
+    .order('streak_count', { ascending: false })
+    .limit(10);
+
+  pane.innerHTML = `
+  <div class="community-banner">
+    <div class="banner-icon"><svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="#C0392B" stroke-width="1.5" stroke-linecap="round"><path d="M13 2L3 14h9l-1 8 10-12h-9l1-8z"/></svg></div>
+    <div class="banner-text">Keep your streak alive — <strong>don't miss a day</strong></div>
+  </div>
+  <div class="lb-section-label">Longest active streaks</div>
+  <div class="lb-list">
+    ${(data||[]).map((u, i) => {
+      const isMe = u.username === currentProfile?.username;
+      return `<div class="lb-item${isMe?' me':''}">
+        <div class="lb-pos ${posClasses[i]||''}">${i+1}</div>
+        <div class="lb-av${isMe?' me':''}">${(u.username||'?').slice(0,2).toUpperCase()}</div>
+        <div class="lb-info">
+          <div class="lb-name">${escHtml(u.username||'')}${isMe?' <span style="font-size:11px;color:#C0392B">(you)</span>':''}</div>
+          <div class="lb-meta"><span class="lb-badge${isMe?' me':''}">${getRank(u.total_watched||0)}</span></div>
+        </div>
+        <div class="lb-score"><div class="lb-val" style="color:#C0392B">🔥 ${u.streak_count||0}</div><div class="lb-val-label">days</div></div>
+      </div>`;
+    }).join('')}
+  </div>`;
+}
+
+async function loadCommunity() {
+  const pane  = document.getElementById('pane-community');
+  const today = new Date().toISOString().split('T')[0];
+
+  const [
+    { count: totalMembers },
+    { count: todayWatchers },
+    { count: todayComments }
+  ] = await Promise.all([
+    sb.from('profiles').select('*', { count: 'exact', head: true }),
+    sb.from('quiz_results').select('*', { count: 'exact', head: true }).gte('created_at', today),
+    sb.from('comments').select('*', { count: 'exact', head: true }).gte('created_at', today)
+  ]);
+
+  const { data: commentData } = await sb.from('comments')
+    .select('movie_id, movies(title, director, year)')
+    .limit(200);
+
+  const movieCounts = {};
+  (commentData || []).forEach(c => {
+    const id = c.movie_id;
+    if (!movieCounts[id]) movieCounts[id] = { title: c.movies?.title||'', director: c.movies?.director||'', year: c.movies?.year||'', count: 0 };
+    movieCounts[id].count++;
+  });
+  const topDiscussed = Object.values(movieCounts).sort((a,b) => b.count - a.count).slice(0,3);
+
+  pane.innerHTML = `
+  <div class="community-banner">
+    <div class="banner-icon"><svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="#C0392B" stroke-width="1.5" stroke-linecap="round"><circle cx="12" cy="12" r="10"/><path d="M12 8v4l3 3"/></svg></div>
+    <div class="banner-text">Everyone watched the <strong>same film today</strong> — you're never watching alone</div>
+  </div>
+  <div style="display:flex;flex-wrap:wrap;gap:8px;margin-bottom:20px">
+    <div class="streak-pill">${todayWatchers||0} watched today</div>
+    <div class="streak-pill">${todayComments||0} comments today</div>
+  </div>
+  ${topDiscussed.length ? `
+  <div class="lb-section-label">Most discussed</div>
+  <div class="lb-list">
+    ${topDiscussed.map((m,i) => `<div class="lb-item">
+      <div class="lb-pos ${posClasses[i]||''}">${i+1}</div>
+      <div class="lb-info">
+        <div class="lb-name">${escHtml(m.title)}</div>
+        <div style="font-size:11px;color:#555;margin-top:2px">${escHtml(m.director)} · ${m.year}</div>
+      </div>
+      <div class="lb-score"><div class="lb-val">${m.count}</div><div class="lb-val-label">comments</div></div>
+    </div>`).join('')}
+  </div>` : ''}
+  <div style="text-align:center;padding:24px 0 8px">
+    <div style="font-size:24px;font-weight:500;margin-bottom:4px">${totalMembers||0}</div>
+    <div style="font-size:13px;color:#555">total members worldwide</div>
+  </div>`;
+}
+
+function switchTab(name, el) {
+  document.querySelectorAll('.tab').forEach(t => t.classList.remove('active'));
+  document.querySelectorAll('.pane').forEach(p => p.classList.remove('active'));
+  el.classList.add('active');
+  document.getElementById('pane-' + name).classList.add('active');
+}
+
+init();
+</script>
+</body>
+</html>

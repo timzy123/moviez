@@ -1,0 +1,209 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8"/>
+<meta name="viewport" content="width=device-width, initial-scale=1.0"/>
+<title>MOVIEZ — One Film. Every Day. Together.</title>
+<link rel="preconnect" href="https://fonts.googleapis.com"/>
+<link href="https://fonts.googleapis.com/css2?family=DM+Sans:wght@300;400;500&display=swap" rel="stylesheet"/>
+<link rel="stylesheet" href="main.css"/>
+<script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
+</head>
+<body>
+<div id="toast" class="toast"></div>
+
+<nav class="nav">
+  <div class="logo">MOVIE<span>Z</span></div>
+  <div class="nav-right">
+    <div class="streak-pill"><div class="streak-dot"></div><span id="streak-count">0 day streak</span></div>
+    <div class="rank-badge" id="user-rank">Newbie</div>
+    <div class="avatar" id="user-avatar" onclick="window.location.href='profile.html'">?</div>
+  </div>
+</nav>
+
+<main>
+  <div id="movie-area">
+    <div class="loading"><div class="loading-dot"></div><p>Loading today's film...</p></div>
+  </div>
+
+  <section class="section" id="rating-section" style="display:none">
+    <div class="section-title">Your rating</div>
+    <div class="stars-row">
+      <div class="stars" id="stars">
+        <button class="star" onclick="rate(1)">1</button>
+        <button class="star" onclick="rate(2)">2</button>
+        <button class="star" onclick="rate(3)">3</button>
+        <button class="star" onclick="rate(4)">4</button>
+        <button class="star" onclick="rate(5)">5</button>
+      </div>
+      <span class="rate-hint" id="rate-hint">Tap to rate</span>
+    </div>
+    <button class="done-btn" onclick="window.location.href='quiz.html'">Done with the movie!</button>
+  </section>
+
+  <section class="section" id="comments-section" style="display:none">
+    <div class="section-title">Discussion</div>
+    <div class="comments" id="comments-list">
+      <div class="loading"><div class="loading-dot"></div><p>Loading comments...</p></div>
+    </div>
+    <div class="comment-input-row">
+      <input class="comment-input" id="comment-input" placeholder="Share your thoughts..."/>
+      <button class="comment-submit" onclick="postComment()">Post</button>
+    </div>
+  </section>
+
+  <section class="section bottom-actions" id="actions-section" style="display:none">
+    <button class="action-btn" onclick="window.location.href='rankings.html'">View rankings</button>
+    <button class="action-btn" onclick="shareApp()">Share today's film</button>
+  </section>
+</main>
+
+<script src="supabase.js"></script>
+<script>
+let currentUser = null;
+let currentProfile = null;
+let todayMovie = null;
+
+async function init() {
+  const auth = await requireAuth();
+  if (!auth) return;
+  currentUser = auth.user;
+  currentProfile = auth.profile;
+
+  if (currentProfile) {
+    document.getElementById('user-avatar').textContent = currentProfile.username.slice(0,2).toUpperCase();
+    document.getElementById('user-rank').textContent = getRank(currentProfile.total_watched || 0);
+    document.getElementById('streak-count').textContent = (currentProfile.streak_count || 0) + ' day streak';
+  }
+
+  await loadTodayMovie();
+}
+
+async function loadTodayMovie() {
+  const today = new Date().toISOString().split('T')[0];
+  const { data, error } = await sb.from('movies').select('*').eq('scheduled_date', today).single();
+  if (error || !data) {
+    document.getElementById('movie-area').innerHTML = `<div class="loading"><p>No film scheduled for today yet. Check back soon!</p></div>`;
+    return;
+  }
+  todayMovie = data;
+  localStorage.setItem('moviez_today_movie_id', data.id);
+  localStorage.setItem('moviez_today_movie_title', data.title);
+
+  const links = (data.watch_links || '').split(',').map(l => l.trim()).filter(Boolean);
+  const linksHtml = links.map(l => `<span class="watch-btn">${escHtml(l)}</span>`).join('');
+
+  document.getElementById('movie-area').innerHTML = `
+  <div class="hero-card">
+    <div class="poster-area">
+      <div class="poster">
+        ${data.poster_url
+          ? `<img src="${escHtml(data.poster_url)}" alt="${escHtml(data.title)}"/>`
+          : `<svg width="40" height="52" viewBox="0 0 40 52" fill="none"><rect width="40" height="52" rx="4" fill="#2a2a2a"/><polygon points="16,18 30,26 16,34" fill="#555"/></svg>`}
+      </div>
+      <div class="movie-info">
+        <div class="today-label">Today's film</div>
+        <div class="movie-title">${escHtml(data.title)}</div>
+        <div class="movie-meta">${data.year || ''} · ${escHtml(data.director || '')} · ${escHtml(data.genre || '')}</div>
+        <div class="ratings-row">
+          ${data.imdb_rating ? `<div class="rating-badge"><span class="dot imdb"></span>IMDb ${data.imdb_rating}</div>` : ''}
+          ${data.rt_rating   ? `<div class="rating-badge"><span class="dot rt"></span>RT ${data.rt_rating}%</div>` : ''}
+        </div>
+        <div class="mantra">"Don't let the ratings define it — watch it and decide for yourself."</div>
+        <div class="watch-links">${linksHtml}</div>
+      </div>
+    </div>
+    <div class="timer-bar">
+      <span class="timer-label">New film in</span>
+      <div class="timer-track"><div class="timer-fill" id="timer-fill" style="width:0%"></div></div>
+      <span class="timer-value" id="timer">00:00:00</span>
+    </div>
+  </div>`;
+
+  document.getElementById('rating-section').style.display = 'block';
+  document.getElementById('comments-section').style.display = 'block';
+  document.getElementById('actions-section').style.display = 'block';
+  startTimer();
+  loadComments();
+  loadUserRating();
+}
+
+async function loadUserRating() {
+  if (!currentUser || !todayMovie) return;
+  const { data } = await sb.from('ratings')
+    .select('score').eq('user_id', currentUser.id).eq('movie_id', todayMovie.id).single();
+  if (data) {
+    document.querySelectorAll('.star').forEach((s, i) => s.classList.toggle('active', i < data.score));
+    document.getElementById('rate-hint').textContent = 'Your rating: ' + data.score + '/5';
+  }
+}
+
+async function rate(val) {
+  document.querySelectorAll('.star').forEach((s, i) => s.classList.toggle('active', i < val));
+  document.getElementById('rate-hint').textContent = 'Your rating: ' + val + '/5';
+  if (!currentUser || !todayMovie) return;
+  await sb.from('ratings').upsert(
+    { user_id: currentUser.id, movie_id: todayMovie.id, score: val },
+    { onConflict: 'user_id,movie_id' }
+  );
+  toast('Rating saved!');
+}
+
+async function loadComments() {
+  if (!todayMovie) return;
+  const { data, error } = await sb.from('comments')
+    .select('*, profiles(username, total_watched)')
+    .eq('movie_id', todayMovie.id)
+    .order('created_at', { ascending: false })
+    .limit(50);
+
+  const list = document.getElementById('comments-list');
+  if (!list) return;
+  if (error || !data || data.length === 0) {
+    list.innerHTML = `<div class="no-comments">No comments yet — be the first to share your thoughts!</div>`;
+    return;
+  }
+  list.innerHTML = data.map(c => {
+    const uname = c.profiles?.username || 'Anonymous';
+    const rank  = getRank(c.profiles?.total_watched || 0);
+    return `<div class="comment">
+      <div class="comment-header"><div class="comment-user">
+        <div class="user-dot">${uname.slice(0,2).toUpperCase()}</div>
+        <span>${escHtml(uname)}</span>
+        <span class="comment-rank">${rank}</span>
+      </div></div>
+      <div class="comment-body">${escHtml(c.body)}</div>
+      <div class="comment-time">${timeAgo(c.created_at)} · ${c.like_count} likes</div>
+    </div>`;
+  }).join('');
+}
+
+async function postComment() {
+  const input = document.getElementById('comment-input');
+  const body  = input.value.trim();
+  if (!body) { toast('Write something first!'); return; }
+  if (!currentUser) { toast('Sign in to comment.'); return; }
+  if (!todayMovie) return;
+  const { error } = await sb.from('comments')
+    .insert({ user_id: currentUser.id, movie_id: todayMovie.id, body });
+  if (error) { toast('Could not post comment.'); return; }
+  input.value = '';
+  toast('Comment posted!');
+  loadComments();
+}
+
+function shareApp() {
+  const text = `Today's film on MOVIEZ is "${todayMovie?.title || 'something great'}" — come watch and discuss!`;
+  if (navigator.share) { navigator.share({ title: 'MOVIEZ', text, url: window.location.href }); }
+  else { navigator.clipboard.writeText(window.location.href); toast('Link copied!'); }
+}
+document.addEventListener('keydown', function(e) {
+  if (e.key === 'Enter' && document.activeElement.id === 'comment-input') {
+    postComment();
+  }
+});
+
+init();
+</script>
+</body>
+</html>

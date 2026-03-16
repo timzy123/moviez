@@ -1,0 +1,124 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8"/>
+<meta name="viewport" content="width=device-width, initial-scale=1.0"/>
+<title>MOVIEZ — Join the Community</title>
+<link rel="preconnect" href="https://fonts.googleapis.com"/>
+<link href="https://fonts.googleapis.com/css2?family=DM+Sans:wght@300;400;500&display=swap" rel="stylesheet"/>
+<link rel="stylesheet" href="main.css"/>
+<script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
+</head>
+<body>
+<div id="toast" class="toast"></div>
+
+<div class="auth-page">
+<div class="auth-wrap">
+  <div class="auth-logo">MOVIE<span>Z</span></div>
+  <div class="film-strip">
+    <div class="film-cell"></div>
+    <div class="film-cell"></div>
+    <div class="film-cell accent">
+      <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="#C0392B" stroke-width="1.5" stroke-linecap="round"><polygon points="5,3 19,12 5,21"/></svg>
+    </div>
+    <div class="film-cell"></div>
+    <div class="film-cell"></div>
+  </div>
+  <div class="auth-hero">
+    <h1 class="auth-title">One film.<br/>Every day.<br/>Together.</h1>
+    <p class="auth-sub">Join thousands of people watching and discussing the same film — every single day.</p>
+  </div>
+  <div class="auth-card">
+    <div class="mode-toggle">
+      <button class="mode-btn active" id="btn-signup" onclick="setMode('signup')">Create account</button>
+      <button class="mode-btn" id="btn-login" onclick="setMode('login')">Sign in</button>
+    </div>
+    <div class="auth-error" id="auth-error"></div>
+
+    <div id="form-signup">
+      <div class="field"><label>Username</label><input type="text" id="su-username" placeholder="e.g. NightReel"/></div>
+      <div class="field"><label>Email address</label><input type="email" id="su-email" placeholder="you@example.com"/></div>
+      <div class="field"><label>Password</label><input type="password" id="su-password" placeholder="At least 8 characters"/></div>
+      <button class="submit-btn" id="su-btn" onclick="doSignup()">Join MOVIEZ</button>
+      <div class="divider-row"><div class="divider-line"></div><span class="divider-text">or continue with</span><div class="divider-line"></div></div>
+      <button class="social-btn"><span class="social-icon g">G</span>Continue with Google</button>
+      <button class="social-btn"><span class="social-icon a">&#63743;</span>Continue with Apple</button>
+      <p class="terms">By joining you agree to our <a href="terms.html">Terms of Service</a> and <a href="privacy.html">Privacy Policy</a></p>
+    </div>
+
+    <div id="form-login" style="display:none">
+      <div class="field"><label>Email address</label><input type="email" id="li-email" placeholder="you@example.com"/></div>
+      <div class="field"><label>Password</label><input type="password" id="li-password" placeholder="Your password"/></div>
+      <div class="forgot" onclick="doForgot()">Forgot password?</div>
+      <button class="submit-btn" id="li-btn" onclick="doLogin()">Sign in</button>
+      <div class="divider-row"><div class="divider-line"></div><span class="divider-text">or continue with</span><div class="divider-line"></div></div>
+      <button class="social-btn"><span class="social-icon g">G</span>Continue with Google</button>
+      <button class="social-btn"><span class="social-icon a">&#63743;</span>Continue with Apple</button>
+    </div>
+  </div>
+</div>
+</div>
+
+<script src="supabase.js"></script>
+<script>
+function setMode(m) {
+  document.getElementById('btn-signup').classList.toggle('active', m === 'signup');
+  document.getElementById('btn-login').classList.toggle('active', m === 'login');
+  document.getElementById('form-signup').style.display = m === 'signup' ? 'block' : 'none';
+  document.getElementById('form-login').style.display = m === 'login' ? 'block' : 'none';
+  document.getElementById('auth-error').style.display = 'none';
+}
+
+function showError(msg) {
+  const el = document.getElementById('auth-error');
+  el.textContent = msg;
+  el.style.display = 'block';
+}
+
+async function doSignup() {
+  const username = document.getElementById('su-username').value.trim();
+  const email    = document.getElementById('su-email').value.trim();
+  const password = document.getElementById('su-password').value;
+  if (!username || !email || !password) { showError('Please fill in all fields.'); return; }
+  if (password.length < 8) { showError('Password must be at least 8 characters.'); return; }
+  const btn = document.getElementById('su-btn');
+  btn.disabled = true; btn.textContent = 'Creating account...';
+  const { error } = await sb.auth.signUp({
+    email, password,
+    options: { data: { username } }
+  });
+  if (error) { showError(error.message); btn.disabled = false; btn.textContent = 'Join MOVIEZ'; return; }
+  toast('Welcome to MOVIEZ! 🎬');
+  setTimeout(() => window.location.href = 'index.html', 1000);
+}
+
+async function doLogin() {
+  const email    = document.getElementById('li-email').value.trim();
+  const password = document.getElementById('li-password').value;
+  if (!email || !password) { showError('Please enter your email and password.'); return; }
+  const btn = document.getElementById('li-btn');
+  btn.disabled = true; btn.textContent = 'Signing in...';
+  const { error } = await sb.auth.signInWithPassword({ email, password });
+  if (error) { showError('Incorrect email or password.'); btn.disabled = false; btn.textContent = 'Sign in'; return; }
+  window.location.href = 'index.html';
+}
+
+async function doForgot() {
+  const email = prompt('Enter your email address:');
+  if (!email) return;
+  await sb.auth.resetPasswordForEmail(email);
+  toast('Password reset email sent!');
+}
+document.addEventListener('keydown', function(e) {
+  if (e.key !== 'Enter') return;
+  const signupVisible = document.getElementById('form-signup').style.display !== 'none';
+  if (signupVisible) { doSignup(); } else { doLogin(); }
+});
+
+(async () => {
+  const user = await getUser();
+  if (user) window.location.href = 'index.html';
+})();
+</script>
+</body>
+</html>
