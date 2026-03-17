@@ -202,7 +202,17 @@ document.addEventListener('keydown', function(e) {
     postComment();
   }
 });
-
+  
+async function likeComment(commentId, el) {
+  if (el.classList.contains('liked')) return;
+  el.classList.add('liked');
+  const current = parseInt(el.textContent.replace('♥ ', '')) || 0;
+  el.textContent = '♥ ' + (current + 1);
+  await sb.from('comments')
+    .update({ like_count: current + 1 })
+    .eq('id', commentId);
+}
+  
 init();
 </script>
 </body>
