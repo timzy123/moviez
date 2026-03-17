@@ -60,11 +60,37 @@ function renderProfile() {
   const joined  = new Date(p.joined_date || Date.now()).toLocaleDateString('en-GB', { month: 'long', year: 'numeric' });
   const initials = p.username.slice(0,2).toUpperCase();
 
-  const days = ['Mon','Tue','Wed','Thu','Fri','Sat','Sun'];
-const today = new Date().getDay();
-const todayIdx = today === 0 ? 6 : today - 1;
+const days = ['Mon','Tue','Wed','Thu','Fri','Sat','Sun'];
+const today = new Date();
+const todayIdx = today.getDay() === 0 ? 6 : today.getDay() - 1;
+const lastWatched = p.last_watched_date ? new Date(p.last_watched_date) : null;
+
+
 const streakDots = days.map((d, i) => {
-  const cls = i < todayIdx ? 'done' : i === todayIdx ? 'today' : '';
+  let cls = '';
+  if (i === todayIdx && lastWatched) {
+    const lastStr = lastWatched.toISOString().split('T')[0];
+    const todayStr = today.toISOString().split('T')[0];
+    cls = lastStr === todayStr ? 'today' : '';
+  } else if (i < todayIdx) {
+    const dayDate = new Date(today);
+    dayDate.setDate(today.getDate() - (todayIdx - i));
+    const dayStr = dayDate.toISOString().split('T')[0];
+    const lastStr = lastWatched ? lastWatched.toISOString().split('T')[0] : null;
+    const diffDays = todayIdx - i;
+    cls = lastWatched && diffDays <= streak ? 'done' : '';
+  }
+  const check = cls === 'today'
+    ? `<svg width="12" height="12" viewBox="0 0 12 12" fill="none"><polyline points="2,6 5,9 10,3" stroke="#fff" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"/></svg>`
+    : cls === 'done'
+    ? `<svg width="12" height="12" viewBox="0 0 12 12" fill="none"><polyline points="2,6 5,9 10,3" stroke="#C0392B" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"/></svg>`
+    : '';
+  return `<div class="streak-day">
+    <div class="streak-dot ${cls}">${check}</div>
+    <div class="streak-day-label${cls === 'today' ? ' today-label-day' : ''}">${d}</div>
+  </div>`;
+}).join('');
+
   const rankDefs = [
     {name:'Newbie',min:0,max:9},{name:'Movie Watcher',min:10,max:19},
     {name:'Movie Buff',min:20,max:29},{name:'Movie Freak',min:30,max:49},
