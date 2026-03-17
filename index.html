@@ -151,11 +151,19 @@ async function rate(val) {
 
 async function loadComments() {
   if (!todayMovie) return;
-  const { data, error } = await sb.from('comments')
-    .select('*, profiles(username, total_watched)')
-    .eq('movie_id', todayMovie.id)
-    .order('created_at', { ascending: false })
-    .limit(50);
+  const [commentsRes, likesRes] = await Promise.all([
+    sb.from('comments')
+      .select('*, profiles(username, total_watched)')
+      .eq('movie_id', todayMovie.id)
+      .order('created_at', { ascending: false })
+      .limit(50),
+    sb.from('comment_likes')
+      .select('comment_id')
+      .eq('user_id', currentUser?.id || '')
+  ]);
+
+  const { data, error } = commentsRes;
+  const likedIds = new Set((likesRes.data || []).map(l => l.comment_id));
 
   const list = document.getElementById('comments-list');
   if (!list) return;
@@ -173,7 +181,7 @@ async function loadComments() {
         <span class="comment-rank">${rank}</span>
       </div></div>
       <div class="comment-body">${escHtml(c.body)}</div>
-      <div class="comment-time">${timeAgo(c.created_at)} · <span class="like-btn" onclick="likeComment('${c.id}', this)">♥ ${c.like_count || 0}</span></div>
+      <div class="comment-time">${timeAgo(c.created_at)} · <span class="like-btn ${likedIds.has(c.id) ? 'liked' : ''}" onclick="likeComment('${c.id}', this)">♥ ${c.like_count || 0}</span></div>
     </div>`;
   }).join('');
 }
@@ -204,13 +212,28 @@ document.addEventListener('keydown', function(e) {
 });
   
 async function likeComment(commentId, el) {
-  if (el.classList.contains('liked')) return;
-  el.classList.add('liked');
-  const current = parseInt(el.textContent.replace('♥ ', '')) || 0;
-  el.textContent = '♥ ' + (current + 1);
-  await sb.from('comments')
-    .update({ like_count: current + 1 })
-    .eq('id', commentId);
+  if (!currentUser) { toast('Sign in to like comments.'); return; }
+
+  const alreadyLiked = el.classList.contains('liked');
+
+  if (alreadyLiked) {
+    el.classList.remove('liked');
+    const current = parseInt(el.textContent.replace('♥ ', '')) || 0;
+    el.textContent = '♥ ' + Math.max(current - 1, 0);
+    await sb.from('comment_likes')
+      .delete()
+      .eq('user_id', currentUser.id)
+      .eq('comment_id', commentId);
+    await sb.rpc('decrement_like', { comment_id: commentId });
+  } else {
+    const { error } = await sb.from('comment_likes')
+      .insert({ user_id: currentUser.id, comment_id: commentId });
+    if (error) { toast('Already liked!'); return; }
+    el.classList.add('liked');
+    const current = parseInt(el.textContent.replace('♥ ', '')) || 0;
+    el.textContent = '♥ ' + (current + 1);
+    await sb.rpc('increment_like', { comment_id: commentId });
+  }
 }
   
 init();
