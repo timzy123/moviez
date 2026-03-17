@@ -246,3 +246,10 @@ main{max-width:600px;margin:0 auto;padding:20px}
   .timer-value{font-size:15px}
   .auth-title{font-size:24px}
 }
+.like-btn {
+  cursor: pointer;
+  color: var(--text-hint);
+  transition: color .15s;
+}
+.like-btn:hover { color: var(--red); }
+.like-btn.liked { color: var(--red); }
