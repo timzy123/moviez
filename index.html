@@ -173,7 +173,7 @@ async function loadComments() {
         <span class="comment-rank">${rank}</span>
       </div></div>
       <div class="comment-body">${escHtml(c.body)}</div>
-      <div class="comment-time">${timeAgo(c.created_at)} · ${c.like_count} likes</div>
+      <div class="comment-time">${timeAgo(c.created_at)} · <span class="like-btn" onclick="likeComment('${c.id}', this)">♥ ${c.like_count || 0}</span></div>
     </div>`;
   }).join('');
 }
