@@ -61,15 +61,21 @@ async function requireAuth() {
 async function updateStreak(userId, profile, perfect) {
   const today = new Date().toISOString().split('T')[0];
   const last = profile.last_watched_date;
+
+  if (last === today) return profile;
+
   const yesterday = new Date();
   yesterday.setDate(yesterday.getDate() - 1);
   const yStr = yesterday.toISOString().split('T')[0];
 
-  if (last === today) return profile;
-
   let newStreak = profile.streak_count || 0;
-  if (last === yStr) { newStreak++; }
-  else { newStreak = 1; }
+  if (last === yStr) {
+    newStreak++;
+  } else if (last === null || last === undefined) {
+    newStreak = 1;
+  } else {
+    newStreak = 1;
+  }
 
   const updates = {
     last_watched_date: today,
