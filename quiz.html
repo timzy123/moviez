@@ -61,24 +61,37 @@
 <script>
 let currentUser = null;
 let currentProfile = null;
-let qCur = 0, qSel = null, qAns = [];
-
-const Q = [
-  { q: "What is the name of the wealthy family the Kims infiltrate?", opts: ["The Parks","The Lees","The Chois","The Ohms"], ans: 0 },
-  { q: "What does Mr. Park find deeply offensive throughout the film?", opts: ["Ki-woo's painting","Ki-taek's smell","The scholar's rock","The basement phone"], ans: 1 },
-  { q: "Where does the housekeeper's husband secretly live for years?", opts: ["In the attic","In the garden shed","In the basement bunker","In a rented flat nearby"], ans: 2 },
-  { q: "What does the scholar's rock symbolise according to Ki-woo's friend?", opts: ["Hard work","Bringing wealth to its owner","Family loyalty","The weight of poverty"], ans: 1 },
-  { q: "Who directed Parasite?", opts: ["Park Chan-wook","Lee Chang-dong","Kim Jee-woon","Bong Joon-ho"], ans: 3 }
-];
+let qCur = 0, qSel = null, qAns = [], questions = [];
 
 async function init() {
   const auth = await requireAuth();
   if (!auth) return;
   currentUser = auth.user;
   currentProfile = auth.profile;
-  renderQ();
+  await loadQuestions();
 }
 
+async function loadQuestions() {
+  const movieId = localStorage.getItem('moviez_today_movie_id');
+  if (!movieId) {
+    document.getElementById('quiz-body').innerHTML = '<div class="loading"><p>No film found. Go back and load today\'s film first.</p></div>';
+    return;
+  }
+  const { data, error } = await sb.from('questions')
+    .select('*')
+    .eq('movie_id', movieId)
+    .limit(5);
+  if (error || !data || data.length === 0) {
+    document.getElementById('quiz-body').innerHTML = '<div class="loading"><p>No questions available for today\'s film yet.</p></div>';
+    return;
+  }
+  questions = data.map(q => ({
+    q: q.question,
+    opts: [q.option_a, q.option_b, q.option_c, q.option_d],
+    ans: ['a','b','c','d'].indexOf(q.correct_option)
+  }));
+  renderQ();
+}
 function renderQ() {
   const q = Q[qCur];
   document.getElementById('q-number').textContent = 'Question ' + (qCur + 1) + ' of 5';
