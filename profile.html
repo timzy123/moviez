@@ -61,14 +61,10 @@ function renderProfile() {
   const initials = p.username.slice(0,2).toUpperCase();
 
   const days = ['Mon','Tue','Wed','Thu','Fri','Sat','Sun'];
-  const today = new Date().getDay();
-  const todayIdx = today === 0 ? 6 : today - 1;
-  const streakDots = days.map((d, i) => {
-    const cls = i < todayIdx ? 'done' : i === todayIdx ? 'today' : '';
-    const check = cls ? `<svg width="12" height="12" viewBox="0 0 12 12" fill="none"><polyline points="2,6 5,9 10,3" stroke="${cls==='today'?'#fff':'#C0392B'}" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"/></svg>` : '';
-    return `<div class="streak-day"><div class="streak-dot ${cls}">${check}</div><div class="streak-day-label${cls==='today'?' today-label-day':''}">${d}</div></div>`;
-  }).join('');
-
+const today = new Date().getDay();
+const todayIdx = today === 0 ? 6 : today - 1;
+const streakDots = days.map((d, i) => {
+  const cls = i < todayIdx ? 'done' : i === todayIdx ? 'today' : '';
   const rankDefs = [
     {name:'Newbie',min:0,max:9},{name:'Movie Watcher',min:10,max:19},
     {name:'Movie Buff',min:20,max:29},{name:'Movie Freak',min:30,max:49},
