@@ -76,9 +76,51 @@ async function init() {
   if (!auth) return;
   currentUser = auth.user;
   currentProfile = auth.profile;
+
+  const today = new Date().toISOString().split('T')[0];
+  const { data: movie } = await sb.from('movies')
+    .select('id, title')
+    .lte('scheduled_date', today)
+    .order('scheduled_date', { ascending: false })
+    .limit(1)
+    .single();
+
+  if (!movie) {
+    document.getElementById('quiz-body').innerHTML = `<div class="loading"><p>No film found for today.</p></div>`;
+    return;
+  }
+
+  localStorage.setItem('moviez_today_movie_id', movie.id);
+  localStorage.setItem('moviez_today_movie_title', movie.title);
+
+  const { data: existing } = await sb.from('quiz_results')
+    .select('score, perfect')
+    .eq('user_id', currentUser.id)
+    .eq('movie_id', movie.id)
+    .single();
+
+  if (existing) {
+    showAlreadyTaken(existing.score, existing.perfect);
+    return;
+  }
+
   renderQ();
 }
 
+function showAlreadyTaken(score, perfect) {
+  document.getElementById('quiz-body').innerHTML = `
+    <div class="result-wrap">
+      <div class="result-icon ${perfect ? 'perfect' : score >= 3 ? 'good' : 'ok'}">
+        ${perfect ? '★' : score + '/5'}
+      </div>
+      <h2 class="result-title">Already completed!</h2>
+      <p class="result-sub">You scored ${score}/5 on today's quiz. Come back tomorrow for a new film and a new quiz.</p>
+      ${perfect ? `<div class="star-earned"><div class="star-icon">★</div><div><div class="star-text">Star earned today</div><div class="star-sub">Check your profile to see it</div></div></div>` : ''}
+      <button class="done-btn" onclick="window.location.href='profile.html'">View my profile</button>
+      <button class="action-btn" style="margin-top:10px;width:100%" onclick="window.location.href='index.html'">Back to discussion</button>
+    </div>`;
+  document.getElementById('result-screen').style.display = 'none';
+}
 function renderQ() {
   const q = Q[qCur];
   document.getElementById('q-number').textContent = 'Question ' + (qCur + 1) + ' of 5';
