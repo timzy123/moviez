@@ -21,6 +21,11 @@
 .fav-movie-display:hover{color:var(--text)}
 .edit-hint{font-size:11px;color:var(--text-hint);margin-top:6px}
 .av-btn{font-size:11px;background:none;border:none;cursor:pointer;padding:0;display:block;text-align:center;line-height:1.8}
+.crop-modal{position:fixed;top:0;left:0;right:0;bottom:0;background:#000;z-index:300;display:flex;flex-direction:column}
+.crop-canvas-wrap{flex:1;position:relative;overflow:hidden;display:flex;align-items:center;justify-content:center}
+.crop-circle{position:absolute;border:2px solid #fff;border-radius:50%;box-shadow:0 0 0 9999px rgba(0,0,0,0.6);pointer-events:none}
+.crop-toolbar{background:#111;padding:16px 20px;display:flex;gap:10px;align-items:center}
+.crop-btn{flex:1;padding:12px;border:none;border-radius:10px;font-size:14px;font-family:var(--font);cursor:pointer;font-weight:500}
 </style>
 </head>
 <body>
@@ -81,10 +86,57 @@ function showAvatarModal(url) {
   const modal = document.getElementById('avatar-modal');
   modal.style.display = 'block';
   modal.innerHTML = `
-    <div class="avatar-modal-overlay" onclick="closeAvatarModal()">
+    <div class="avatar-modal-overlay" id="modal-overlay">
       <span class="avatar-modal-close" onclick="closeAvatarModal()">✕</span>
-      <img class="avatar-modal-img" src="${escHtml(url)}" onclick="event.stopPropagation()"/>
+      <div id="img-container" style="touch-action:none;user-select:none;display:flex;align-items:center;justify-content:center;width:100%;height:100%">
+        <img id="modal-img" class="avatar-modal-img" src="${escHtml(url)}" style="transform-origin:center;transition:none"/>
+      </div>
     </div>`;
+
+  const img = document.getElementById('modal-img');
+  const container = document.getElementById('img-container');
+  let scale = 1, startDist = 0, startScale = 1;
+  let posX = 0, posY = 0, startX = 0, startY = 0, isDragging = false;
+  let lastTap = 0;
+
+  function applyTransform() {
+    img.style.transform = `translate(${posX}px,${posY}px) scale(${scale})`;
+  }
+
+  container.addEventListener('touchstart', e => {
+    if (e.touches.length === 2) {
+      startDist = Math.hypot(e.touches[0].clientX - e.touches[1].clientX, e.touches[0].clientY - e.touches[1].clientY);
+      startScale = scale;
+    } else if (e.touches.length === 1) {
+      const now = Date.now();
+      if (now - lastTap < 300) { scale = scale > 1 ? 1 : 2.5; posX = 0; posY = 0; applyTransform(); }
+      lastTap = now;
+      startX = e.touches[0].clientX - posX;
+      startY = e.touches[0].clientY - posY;
+      isDragging = true;
+    }
+  }, { passive: true });
+
+  container.addEventListener('touchmove', e => {
+    e.preventDefault();
+    if (e.touches.length === 2) {
+      const dist = Math.hypot(e.touches[0].clientX - e.touches[1].clientX, e.touches[0].clientY - e.touches[1].clientY);
+      scale = Math.min(5, Math.max(1, startScale * (dist / startDist)));
+      applyTransform();
+    } else if (e.touches.length === 1 && isDragging && scale > 1) {
+      posX = e.touches[0].clientX - startX;
+      posY = e.touches[0].clientY - startY;
+      applyTransform();
+    }
+  }, { passive: false });
+
+  container.addEventListener('touchend', e => {
+    if (e.touches.length === 0) { isDragging = false; if (scale <= 1) { scale = 1; posX = 0; posY = 0; applyTransform(); } }
+  });
+
+  document.getElementById('modal-overlay').addEventListener('click', e => {
+    if (e.target === document.getElementById('modal-overlay')) closeAvatarModal();
+  });
 }
 
 function closeAvatarModal() {
@@ -300,26 +352,182 @@ function cancelEdit() {
 async function uploadAvatar(input) {
   const file = input.files && input.files[0];
   if (!file) { toast('No file selected.'); return; }
-  if (file.size > 2 * 1024 * 1024) { toast('Image must be under 2MB.'); return; }
-  toast('Uploading...');
-  try {
-    const ext  = file.name.includes('.') ? file.name.split('.').pop() : 'jpg';
-    const path = `${currentUser.id}/avatar.${ext}`;
-    const { error: uploadError } = await sb.storage
-      .from('avatars')
-      .upload(path, file, { upsert: true, contentType: file.type });
-    if (uploadError) { toast('Upload failed: ' + uploadError.message); return; }
-    const { data: urlData } = sb.storage.from('avatars').getPublicUrl(path);
-    const avatarUrl = urlData.publicUrl + '?t=' + Date.now();
-    const { error: updateError } = await sb.from('profiles').update({ avatar_url: avatarUrl }).eq('id', currentUser.id);
-    if (updateError) { toast('Could not save avatar.'); return; }
-    currentProfile.avatar_url = avatarUrl;
-    updateNavAvatar();
-    renderProfile();
-    toast('Profile picture updated!');
-  } catch (err) {
-    toast('Something went wrong. Try again.');
+  if (file.size > 10 * 1024 * 1024) { toast('Image must be under 10MB.'); return; }
+  const url = URL.createObjectURL(file);
+  showCropModal(url);
+  input.value = '';
+}
+
+function showCropModal(url) {
+  const existing = document.getElementById('crop-modal');
+  if (existing) existing.remove();
+
+  const modal = document.createElement('div');
+  modal.id = 'crop-modal';
+  modal.className = 'crop-modal';
+  modal.innerHTML = `
+    <div style="padding:16px 20px;display:flex;align-items:center;justify-content:space-between">
+      <span style="color:#fff;font-size:14px">Move and zoom to crop</span>
+      <span style="color:#888;font-size:13px">Circle = profile picture</span>
+    </div>
+    <div class="crop-canvas-wrap" id="crop-wrap">
+      <img id="crop-img" src="${url}" style="position:absolute;transform-origin:center;touch-action:none;user-select:none;max-width:none"/>
+      <div class="crop-circle" id="crop-circle"></div>
+    </div>
+    <div class="crop-toolbar">
+      <button class="crop-btn" style="background:#2a2a2a;color:#aaa" onclick="cancelCrop()">Cancel</button>
+      <button class="crop-btn" style="background:#C0392B;color:#fff" onclick="confirmCrop()">Use this photo</button>
+    </div>`;
+  document.body.appendChild(modal);
+
+  const wrap   = document.getElementById('crop-wrap');
+  const img    = document.getElementById('crop-img');
+  const circle = document.getElementById('crop-circle');
+
+  const size = Math.min(window.innerWidth, window.innerHeight - 160) * 0.8;
+  circle.style.width     = size + 'px';
+  circle.style.height    = size + 'px';
+  circle.style.left      = '50%';
+  circle.style.top       = '50%';
+  circle.style.transform = 'translate(-50%, -50%)';
+
+  let imgW = 0, imgH = 0;
+  let scale = 1, posX = 0, posY = 0;
+  let startDist = 0, startScale = 1;
+  let startX = 0, startY = 0, isDragging = false;
+  let lastTap = 0;
+
+  img.onload = () => {
+    imgW = img.naturalWidth;
+    imgH = img.naturalHeight;
+    scale = Math.max(size / imgW, size / imgH) * 1.1;
+    posX = 0; posY = 0;
+    applyTransform();
+  };
+
+  function applyTransform() {
+    img.style.width  = imgW + 'px';
+    img.style.height = imgH + 'px';
+    img.style.left   = (wrap.offsetWidth  / 2 - imgW / 2 + posX) + 'px';
+    img.style.top    = (wrap.offsetHeight / 2 - imgH / 2 + posY) + 'px';
+    img.style.transform = `scale(${scale})`;
   }
+
+  wrap.addEventListener('touchstart', e => {
+    if (e.touches.length === 2) {
+      startDist  = Math.hypot(e.touches[0].clientX - e.touches[1].clientX, e.touches[0].clientY - e.touches[1].clientY);
+      startScale = scale;
+    } else if (e.touches.length === 1) {
+      const now = Date.now();
+      if (now - lastTap < 300) {
+        const minScale = Math.max(size / imgW, size / imgH) * 1.1;
+        scale = scale > minScale ? minScale : scale * 2;
+        applyTransform();
+      }
+      lastTap    = now;
+      startX     = e.touches[0].clientX - posX;
+      startY     = e.touches[0].clientY - posY;
+      isDragging = true;
+    }
+  }, { passive: true });
+
+  wrap.addEventListener('touchmove', e => {
+    e.preventDefault();
+    if (e.touches.length === 2) {
+      const dist = Math.hypot(e.touches[0].clientX - e.touches[1].clientX, e.touches[0].clientY - e.touches[1].clientY);
+      scale = Math.max(Math.max(size / imgW, size / imgH), startScale * (dist / startDist));
+      applyTransform();
+    } else if (e.touches.length === 1 && isDragging) {
+      posX = e.touches[0].clientX - startX;
+      posY = e.touches[0].clientY - startY;
+      applyTransform();
+    }
+  }, { passive: false });
+
+  wrap.addEventListener('touchend', () => { isDragging = false; });
+
+  wrap.addEventListener('mousedown', e => {
+    startX = e.clientX - posX;
+    startY = e.clientY - posY;
+    isDragging = true;
+  });
+  wrap.addEventListener('mousemove', e => {
+    if (!isDragging) return;
+    posX = e.clientX - startX;
+    posY = e.clientY - startY;
+    applyTransform();
+  });
+  wrap.addEventListener('mouseup',    () => { isDragging = false; });
+  wrap.addEventListener('mouseleave', () => { isDragging = false; });
+  wrap.addEventListener('wheel', e => {
+    e.preventDefault();
+    const minScale = Math.max(size / imgW, size / imgH);
+    scale = Math.max(minScale, scale - e.deltaY * 0.001);
+    applyTransform();
+  }, { passive: false });
+
+  window._cropData = {
+    img, wrap, circle, size,
+    getScale: () => scale,
+    getPos:   () => ({ posX, posY }),
+    imgW, imgH
+  };
+}
+
+function cancelCrop() {
+  const modal = document.getElementById('crop-modal');
+  if (modal) modal.remove();
+}
+
+async function confirmCrop() {
+  const { img, wrap, circle, size, getScale, getPos, imgW, imgH } = window._cropData;
+  const scale        = getScale();
+  const { posX, posY } = getPos();
+
+  const canvas  = document.createElement('canvas');
+  const output  = 512;
+  canvas.width  = output;
+  canvas.height = output;
+  const ctx = canvas.getContext('2d');
+  ctx.beginPath();
+  ctx.arc(output / 2, output / 2, output / 2, 0, Math.PI * 2);
+  ctx.clip();
+
+  const wrapW    = wrap.offsetWidth;
+  const wrapH    = wrap.offsetHeight;
+  const imgLeft  = wrapW / 2 - imgW / 2 + posX;
+  const imgTop   = wrapH / 2 - imgH / 2 + posY;
+  const circleLeft = wrapW / 2 - size / 2;
+  const circleTop  = wrapH / 2 - size / 2;
+  const srcX = (circleLeft - imgLeft) / scale;
+  const srcY = (circleTop  - imgTop)  / scale;
+  const srcS = size / scale;
+
+  ctx.drawImage(img, srcX, srcY, srcS, srcS, 0, 0, output, output);
+
+  canvas.toBlob(async blob => {
+    cancelCrop();
+    toast('Uploading...');
+    try {
+      const path = `${currentUser.id}/avatar.jpg`;
+      const { error: uploadError } = await sb.storage
+        .from('avatars')
+        .upload(path, blob, { upsert: true, contentType: 'image/jpeg' });
+      if (uploadError) { toast('Upload failed: ' + uploadError.message); return; }
+      const { data: urlData } = sb.storage.from('avatars').getPublicUrl(path);
+      const avatarUrl = urlData.publicUrl + '?t=' + Date.now();
+      const { error: updateError } = await sb.from('profiles')
+        .update({ avatar_url: avatarUrl })
+        .eq('id', currentUser.id);
+      if (updateError) { toast('Could not save avatar.'); return; }
+      currentProfile.avatar_url = avatarUrl;
+      updateNavAvatar();
+      renderProfile();
+      toast('Profile picture updated!');
+    } catch (err) {
+      toast('Something went wrong. Try again.');
+    }
+  }, 'image/jpeg', 0.92);
 }
 
 async function loadQuizHistory() {
