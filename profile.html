@@ -6,25 +6,26 @@
 <title>MOVIEZ — My Profile</title>
 <link rel="preconnect" href="https://fonts.googleapis.com"/>
 <link href="https://fonts.googleapis.com/css2?family=DM+Sans:wght@300;400;500&display=swap" rel="stylesheet"/>
-<link rel="stylesheet" href="main.css"/>
+<link rel="stylesheet" href="styles/main.css"/>
 <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
 <style>
-.crop-overlay{display:none;position:fixed;inset:0;background:rgba(0,0,0,0.88);z-index:1000;flex-direction:column;align-items:center;justify-content:center;padding:20px}
-.crop-overlay.show{display:flex}
-.crop-title{font-size:15px;font-weight:500;color:#f0ede8;margin-bottom:16px}
-.crop-canvas-wrap{position:relative;width:280px;height:280px;border-radius:50%;overflow:hidden;border:2px solid #C0392B;cursor:move;background:#1a1a1a;flex-shrink:0;touch-action:none}
-.crop-hint{font-size:12px;color:#888;margin-top:12px;text-align:center}
-.crop-zoom{display:flex;align-items:center;gap:10px;margin-top:14px;width:280px}
-.crop-zoom label{font-size:12px;color:#888;white-space:nowrap}
-.crop-zoom input{flex:1}
-.crop-btns{display:flex;gap:10px;margin-top:16px;width:280px}
-.crop-btn-cancel{flex:1;padding:12px;background:#1a1a1a;border:0.5px solid #2a2a2a;border-radius:10px;color:#888;font-size:14px;font-family:var(--font);cursor:pointer}
-.crop-btn-save{flex:1;padding:12px;background:#C0392B;border:none;border-radius:10px;color:#fff;font-size:14px;font-weight:500;font-family:var(--font);cursor:pointer}
-.crop-btn-save:disabled{background:#555;cursor:not-allowed}
+.avatar-modal-overlay{position:fixed;top:0;left:0;right:0;bottom:0;background:rgba(0,0,0,0.85);z-index:200;display:flex;align-items:center;justify-content:center}
+.avatar-modal-img{max-width:90vw;max-height:90vh;border-radius:12px;object-fit:contain}
+.avatar-modal-close{position:fixed;top:20px;right:20px;font-size:28px;color:#fff;cursor:pointer;z-index:201;line-height:1}
+.edit-field{width:100%;background:var(--surface2);border:0.5px solid var(--border);border-radius:8px;padding:10px 14px;color:var(--text);font-size:13px;font-family:var(--font);outline:none;transition:border-color .15s;resize:none}
+.edit-field:focus{border-color:var(--red)}
+.edit-field::placeholder{color:#3a3a3a}
+.save-btn{background:var(--red);border:none;border-radius:8px;padding:8px 16px;color:#fff;font-size:13px;cursor:pointer}
+.quote-display{font-size:13px;color:var(--text-muted);font-style:italic;line-height:1.6;padding:10px 14px;background:var(--surface2);border-left:2px solid var(--red);border-radius:0 8px 8px 0;cursor:pointer}
+.fav-movie-display{font-size:13px;color:var(--text-muted);padding:8px 0;cursor:pointer;display:flex;align-items:center;justify-content:space-between}
+.fav-movie-display:hover{color:var(--text)}
+.edit-hint{font-size:11px;color:var(--text-hint);margin-top:6px}
 </style>
 </head>
 <body>
 <div id="toast" class="toast"></div>
+<div id="avatar-modal" style="display:none"></div>
+<input type="file" id="avatar-input" accept="image/*" style="display:none" onchange="uploadAvatar(this)"/>
 
 <nav class="nav">
   <div class="logo">MOVIE<span>Z</span></div>
@@ -47,146 +48,12 @@
   </div>
 </main>
 
-<input type="file" id="avatar-input" accept="image/*" style="display:none" onchange="openCropper(this)"/>
-
-<div class="crop-overlay" id="crop-overlay">
-  <div class="crop-title">Adjust your photo</div>
-  <div class="crop-canvas-wrap" id="crop-wrap">
-    <canvas id="crop-canvas" width="280" height="280"></canvas>
-  </div>
-  <div class="crop-hint">Drag to reposition · Use slider to zoom</div>
-  <div class="crop-zoom">
-    <label>Zoom</label>
-    <input type="range" id="zoom-slider" min="0.1" max="3" step="0.01" value="1" oninput="drawCrop()"/>
-  </div>
-  <div class="crop-btns">
-    <button class="crop-btn-cancel" onclick="closeCropper()">Cancel</button>
-    <button class="crop-btn-save" id="crop-save-btn" onclick="saveCrop()">Save photo</button>
-  </div>
-</div>
-
-<script src="supabase.js"></script>
+<script src="lib/supabase.js"></script>
 <script>
 let currentUser = null;
 let currentProfile = null;
+let editingField = null;
 
-/* ── CROPPER ── */
-let cropImage = null;
-let cropX = 0, cropY = 0;
-let isDragging = false;
-let dragStartX = 0, dragStartY = 0;
-let imgStartX = 0, imgStartY = 0;
-
-function openCropper(input) {
-  const file = input.files && input.files[0];
-  if (!file) return;
-  if (file.size > 10 * 1024 * 1024) { toast('Image must be under 10MB.'); return; }
-  const reader = new FileReader();
-  reader.onload = (e) => {
-    cropImage = new Image();
-    cropImage.onload = () => {
-      const minZoom = Math.max(280 / cropImage.width, 280 / cropImage.height);
-      const slider = document.getElementById('zoom-slider');
-      slider.min = minZoom.toFixed(3);
-      slider.max = (minZoom * 3).toFixed(3);
-      slider.value = minZoom.toFixed(3);
-      cropX = (280 - cropImage.width * minZoom) / 2;
-      cropY = (280 - cropImage.height * minZoom) / 2;
-      drawCrop();
-      document.getElementById('crop-overlay').classList.add('show');
-    };
-    cropImage.src = e.target.result;
-  };
-  reader.readAsDataURL(file);
-  input.value = '';
-}
-
-function drawCrop() {
-  if (!cropImage) return;
-  const canvas = document.getElementById('crop-canvas');
-  const ctx = canvas.getContext('2d');
-  const zoom = parseFloat(document.getElementById('zoom-slider').value);
-  const scaledW = cropImage.width * zoom;
-  const scaledH = cropImage.height * zoom;
-  cropX = Math.min(0, Math.max(280 - scaledW, cropX));
-  cropY = Math.min(0, Math.max(280 - scaledH, cropY));
-  ctx.clearRect(0, 0, 280, 280);
-  ctx.drawImage(cropImage, cropX, cropY, scaledW, scaledH);
-}
-
-function closeCropper() {
-  document.getElementById('crop-overlay').classList.remove('show');
-  cropImage = null;
-}
-
-async function saveCrop() {
-  if (!cropImage) return;
-  const btn = document.getElementById('crop-save-btn');
-  btn.disabled = true;
-  btn.textContent = 'Saving...';
-  const canvas = document.getElementById('crop-canvas');
-  canvas.toBlob(async (blob) => {
-    try {
-      const path = `${currentUser.id}/avatar.jpg`;
-      const { error: uploadError } = await sb.storage
-        .from('avatars')
-        .upload(path, blob, { upsert: true, contentType: 'image/jpeg' });
-      if (uploadError) { toast('Upload failed: ' + uploadError.message); btn.disabled = false; btn.textContent = 'Save photo'; return; }
-      const { data: urlData } = sb.storage.from('avatars').getPublicUrl(path);
-      const avatarUrl = urlData.publicUrl + '?t=' + Date.now();
-      const { error: updateError } = await sb.from('profiles').update({ avatar_url: avatarUrl }).eq('id', currentUser.id);
-      if (updateError) { toast('Could not save avatar.'); btn.disabled = false; btn.textContent = 'Save photo'; return; }
-      currentProfile.avatar_url = avatarUrl;
-      const display = document.getElementById('avatar-display');
-      if (display) {
-        display.innerHTML = `<img src="${avatarUrl}" style="width:100%;height:100%;object-fit:cover;border-radius:50%"/><div style="position:absolute;bottom:0;left:0;right:0;background:rgba(0,0,0,0.5);font-size:9px;color:#fff;text-align:center;padding:3px 0">Edit</div>`;
-      }
-      updateNavAvatar();
-      closeCropper();
-      toast('Profile picture updated!');
-    } catch (err) {
-      console.error(err);
-      toast('Something went wrong. Try again.');
-      btn.disabled = false;
-      btn.textContent = 'Save photo';
-    }
-  }, 'image/jpeg', 0.92);
-}
-
-/* ── DRAG EVENTS ── */
-const cropWrap = document.getElementById('crop-wrap');
-
-cropWrap.addEventListener('mousedown', (e) => {
-  isDragging = true;
-  dragStartX = e.clientX; dragStartY = e.clientY;
-  imgStartX = cropX; imgStartY = cropY;
-  e.preventDefault();
-});
-
-cropWrap.addEventListener('touchstart', (e) => {
-  isDragging = true;
-  dragStartX = e.touches[0].clientX; dragStartY = e.touches[0].clientY;
-  imgStartX = cropX; imgStartY = cropY;
-}, { passive: true });
-
-document.addEventListener('mousemove', (e) => {
-  if (!isDragging) return;
-  cropX = imgStartX + (e.clientX - dragStartX);
-  cropY = imgStartY + (e.clientY - dragStartY);
-  drawCrop();
-});
-
-document.addEventListener('touchmove', (e) => {
-  if (!isDragging) return;
-  cropX = imgStartX + (e.touches[0].clientX - dragStartX);
-  cropY = imgStartY + (e.touches[0].clientY - dragStartY);
-  drawCrop();
-}, { passive: true });
-
-document.addEventListener('mouseup', () => { isDragging = false; });
-document.addEventListener('touchend', () => { isDragging = false; });
-
-/* ── PROFILE ── */
 async function init() {
   const auth = await requireAuth();
   if (!auth) return;
@@ -209,15 +76,33 @@ function updateNavAvatar() {
   }
 }
 
+function showAvatarModal(url) {
+  const modal = document.getElementById('avatar-modal');
+  modal.style.display = 'block';
+  modal.innerHTML = `
+    <div class="avatar-modal-overlay" onclick="closeAvatarModal()">
+      <span class="avatar-modal-close" onclick="closeAvatarModal()">✕</span>
+      <img class="avatar-modal-img" src="${escHtml(url)}" onclick="event.stopPropagation()"/>
+    </div>`;
+}
+
+function closeAvatarModal() {
+  const modal = document.getElementById('avatar-modal');
+  modal.style.display = 'none';
+  modal.innerHTML = '';
+}
+
 function renderProfile() {
   const p = currentProfile;
   if (!p) return;
+
   const watched  = p.total_watched || 0;
   const streak   = p.streak_count  || 0;
   const stars    = p.stars_earned  || 0;
   const rank     = getRank(watched);
   const joined   = new Date(p.joined_date || Date.now()).toLocaleDateString('en-GB', { month: 'long', year: 'numeric' });
   const initials = p.username.slice(0, 2).toUpperCase();
+
   const avatarHtml = p.avatar_url
     ? `<img src="${p.avatar_url}" style="width:100%;height:100%;object-fit:cover;border-radius:50%"/>`
     : initials;
@@ -230,37 +115,62 @@ function renderProfile() {
   const streakDots = days.map((d, i) => {
     let cls = '';
     if (i === todayIdx && lastWatched) {
-      cls = lastWatched.toISOString().split('T')[0] === today.toISOString().split('T')[0] ? 'today' : '';
+      const lastStr  = lastWatched.toISOString().split('T')[0];
+      const todayStr = today.toISOString().split('T')[0];
+      cls = lastStr === todayStr ? 'today' : '';
     } else if (i < todayIdx) {
-      cls = lastWatched && (todayIdx - i) <= p.streak_count ? 'done' : '';
+      const diffDays = todayIdx - i;
+      cls = lastWatched && diffDays <= p.streak_count ? 'done' : '';
     }
     const check = cls === 'today'
       ? `<svg width="12" height="12" viewBox="0 0 12 12" fill="none"><polyline points="2,6 5,9 10,3" stroke="#fff" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"/></svg>`
       : cls === 'done'
       ? `<svg width="12" height="12" viewBox="0 0 12 12" fill="none"><polyline points="2,6 5,9 10,3" stroke="#C0392B" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"/></svg>`
       : '';
-    return `<div class="streak-day"><div class="streak-dot ${cls}">${check}</div><div class="streak-day-label${cls==='today'?' today-label-day':''}">${d}</div></div>`;
+    return `<div class="streak-day">
+      <div class="streak-dot ${cls}">${check}</div>
+      <div class="streak-day-label${cls === 'today' ? ' today-label-day' : ''}">${d}</div>
+    </div>`;
   }).join('');
 
   const rankDefs = [
-    {name:'Newbie',min:0,max:9},{name:'Movie Watcher',min:10,max:19},
-    {name:'Movie Buff',min:20,max:29},{name:'Movie Freak',min:30,max:49},
-    {name:'Cinephile',min:50,max:99},{name:'Cinéaste',min:100,max:9999}
+    {name:'Newbie',min:0,max:9},
+    {name:'Movie Watcher',min:10,max:19},
+    {name:'Movie Buff',min:20,max:29},
+    {name:'Movie Freak',min:30,max:49},
+    {name:'Cinephile',min:50,max:99},
+    {name:'Cinéaste',min:100,max:9999}
   ];
-  const rankListHtml = rankDefs.map((r,i) => {
-    let barCls='rank-bar', nameCls='rank-name', w='0%';
-    if(watched>r.max){barCls='rank-bar done';nameCls='rank-name done';w='100%';}
-    else if(watched>=r.min){barCls='rank-bar current';nameCls='rank-name current';w=Math.round(((watched-r.min)/(r.max-r.min+1))*100)+'%';}
+
+  const rankListHtml = rankDefs.map((r, i) => {
+    let barCls = 'rank-bar', nameCls = 'rank-name', w = '0%';
+    if (watched > r.max)       { barCls = 'rank-bar done';    nameCls = 'rank-name done';    w = '100%'; }
+    else if (watched >= r.min) { barCls = 'rank-bar current'; nameCls = 'rank-name current'; w = Math.round(((watched - r.min) / (r.max - r.min + 1)) * 100) + '%'; }
     return `<div class="rank-item"><span class="rank-n">${i+1}</span><div class="rank-bar-wrap"><div class="${barCls}" style="width:${w}"></div></div><span class="${nameCls}">${r.name}</span><span class="rank-movies">${r.min===100?'100+':r.min===0?'1–9':r.min}</span></div>`;
   }).join('');
+
   const next = rankDefs.find(r => watched < r.min);
+
+  const quoteHtml = p.favorite_quote
+    ? `<div class="quote-display" onclick="editField('quote')">"${escHtml(p.favorite_quote)}"</div>`
+    : `<div class="quote-display" onclick="editField('quote')" style="color:var(--text-hint);font-style:normal">Tap to add your favourite movie line...</div>`;
+
+  const favAllTimeHtml = p.favorite_movie_alltime
+    ? `<div class="fav-movie-display" onclick="editField('alltime')"><span>${escHtml(p.favorite_movie_alltime)}</span><span style="font-size:11px;color:var(--text-hint)">edit</span></div>`
+    : `<div class="fav-movie-display" onclick="editField('alltime')"><span style="color:var(--text-hint)">Tap to add...</span></div>`;
+
+  const favNowHtml = p.favorite_movie_now
+    ? `<div class="fav-movie-display" onclick="editField('now')"><span>${escHtml(p.favorite_movie_now)}</span><span style="font-size:11px;color:var(--text-hint)">edit</span></div>`
+    : `<div class="fav-movie-display" onclick="editField('now')"><span style="color:var(--text-hint)">Tap to add...</span></div>`;
 
   document.getElementById('pane-profile').innerHTML = `
   <div class="profile-hero">
     <div class="profile-top">
-      <div class="avatar-lg" id="avatar-display" onclick="document.getElementById('avatar-input').click()" style="cursor:pointer;overflow:hidden;position:relative">
+      <div class="avatar-lg" id="avatar-display" style="cursor:pointer;overflow:hidden;position:relative">
         ${avatarHtml}
-        <div style="position:absolute;bottom:0;left:0;right:0;background:rgba(0,0,0,0.5);font-size:9px;color:#fff;text-align:center;padding:3px 0">Edit</div>
+        <div style="position:absolute;bottom:0;left:0;right:0;background:rgba(0,0,0,0.5);font-size:9px;color:#fff;text-align:center;padding:3px 0">
+          ${p.avatar_url ? 'View / Edit' : 'Add photo'}
+        </div>
       </div>
       <div>
         <div class="profile-name">${escHtml(p.username)}</div>
@@ -274,18 +184,129 @@ function renderProfile() {
       <div class="stat-card"><div class="stat-val">${stars}</div><div class="stat-label">Stars earned</div></div>
     </div>
   </div>
+
+  <div class="block">
+    <div class="block-title">Favourite movie line</div>
+    ${quoteHtml}
+    <div class="edit-hint">Tap to edit</div>
+  </div>
+
+  <div class="block">
+    <div class="block-title">Favourite films</div>
+    <div style="font-size:12px;color:var(--text-hint);margin-bottom:4px">All time</div>
+    ${favAllTimeHtml}
+    <div style="height:0.5px;background:var(--border);margin:8px 0"></div>
+    <div style="font-size:12px;color:var(--text-hint);margin-bottom:4px">Right now</div>
+    ${favNowHtml}
+    <div class="edit-hint">Tap to edit</div>
+  </div>
+
+  <div id="edit-panel" style="display:none" class="block">
+    <div class="block-title" id="edit-panel-title">Edit</div>
+    <textarea class="edit-field" id="edit-input" rows="2" placeholder=""></textarea>
+    <div style="display:flex;gap:8px;margin-top:8px">
+      <button class="save-btn" onclick="saveField()">Save</button>
+      <button class="action-btn" style="flex:none;padding:8px 16px;font-size:13px" onclick="cancelEdit()">Cancel</button>
+    </div>
+  </div>
+
   <div class="block">
     <div class="block-title">This week's streak</div>
     <div class="streak-row">${streakDots}</div>
     <div class="streak-count"><span class="streak-num">${streak}</span><span class="streak-text">day streak — keep it going</span></div>
   </div>
+
   <div class="block">
     <div class="block-title">Rank journey</div>
     <div class="rank-list">${rankListHtml}</div>
-    ${next?`<div class="rank-next">${next.min-watched} more films to reach <span style="color:var(--red)">${next.name}</span></div>`:`<div class="rank-next" style="color:var(--gold)">You have reached the highest rank — Cinéaste!</div>`}
+    ${next
+      ? `<div class="rank-next">${next.min - watched} more films to reach <span style="color:var(--red)">${next.name}</span></div>`
+      : `<div class="rank-next" style="color:var(--gold)">You have reached the highest rank — Cinéaste!</div>`}
   </div>
+
   <button class="action-btn" style="width:100%;margin-bottom:10px" onclick="shareProfile()">Share my profile</button>
   <button class="action-btn" style="width:100%;color:#eb5757;border-color:#7d2e2e" onclick="doLogout()">Sign out</button>`;
+
+  document.getElementById('avatar-display').addEventListener('click', () => {
+    if (currentProfile?.avatar_url) {
+      showAvatarModal(currentProfile.avatar_url);
+    } else {
+      document.getElementById('avatar-input').click();
+    }
+  });
+}
+
+function editField(field) {
+  editingField = field;
+  const panel = document.getElementById('edit-panel');
+  const input = document.getElementById('edit-input');
+  const title = document.getElementById('edit-panel-title');
+  if (!panel || !input) return;
+  if (field === 'quote') {
+    title.textContent = 'Your favourite movie line';
+    input.placeholder = 'e.g. "Get busy living, or get busy dying."';
+    input.value = currentProfile.favorite_quote || '';
+    input.rows = 3;
+  } else if (field === 'alltime') {
+    title.textContent = 'Favourite film of all time';
+    input.placeholder = 'e.g. The Godfather';
+    input.value = currentProfile.favorite_movie_alltime || '';
+    input.rows = 1;
+  } else if (field === 'now') {
+    title.textContent = 'Favourite film right now';
+    input.placeholder = 'e.g. Parasite';
+    input.value = currentProfile.favorite_movie_now || '';
+    input.rows = 1;
+  }
+  panel.style.display = 'block';
+  input.focus();
+  panel.scrollIntoView({ behavior: 'smooth', block: 'center' });
+}
+
+async function saveField() {
+  const input = document.getElementById('edit-input');
+  const value = input.value.trim();
+  const updates = {};
+  if (editingField === 'quote')   updates.favorite_quote = value;
+  if (editingField === 'alltime') updates.favorite_movie_alltime = value;
+  if (editingField === 'now')     updates.favorite_movie_now = value;
+  const { error } = await sb.from('profiles').update(updates).eq('id', currentUser.id);
+  if (error) { toast('Could not save. Try again.'); return; }
+  currentProfile = { ...currentProfile, ...updates };
+  document.getElementById('edit-panel').style.display = 'none';
+  editingField = null;
+  renderProfile();
+  toast('Saved!');
+}
+
+function cancelEdit() {
+  document.getElementById('edit-panel').style.display = 'none';
+  editingField = null;
+}
+
+async function uploadAvatar(input) {
+  const file = input.files && input.files[0];
+  if (!file) { toast('No file selected.'); return; }
+  if (file.size > 2 * 1024 * 1024) { toast('Image must be under 2MB.'); return; }
+  toast('Uploading...');
+  try {
+    const ext  = file.name.includes('.') ? file.name.split('.').pop() : 'jpg';
+    const path = `${currentUser.id}/avatar.${ext}`;
+    const { error: uploadError } = await sb.storage
+      .from('avatars')
+      .upload(path, file, { upsert: true, contentType: file.type });
+    if (uploadError) { toast('Upload failed: ' + uploadError.message); return; }
+    const { data: urlData } = sb.storage.from('avatars').getPublicUrl(path);
+    const avatarUrl = urlData.publicUrl + '?t=' + Date.now();
+    const { error: updateError } = await sb.from('profiles').update({ avatar_url: avatarUrl }).eq('id', currentUser.id);
+    if (updateError) { toast('Could not save avatar.'); return; }
+    currentProfile.avatar_url = avatarUrl;
+    updateNavAvatar();
+    renderProfile();
+    toast('Profile picture updated!');
+  } catch (err) {
+    toast('Something went wrong. Try again.');
+  }
 }
 
 async function loadQuizHistory() {
@@ -302,15 +323,24 @@ async function loadQuizHistory() {
   }
   const starMovies = data.filter(r => r.perfect);
   pane.innerHTML = `
-  ${starMovies.length?`<div class="block"><div class="block-title">Stars earned</div><div class="stars-grid">${starMovies.map(r=>`<div class="star-chip">★ ${escHtml(r.movies?.title||'')}</div>`).join('')}</div></div>`:''}
-  <div class="block"><div class="block-title">All quiz results</div>
-  ${data.map(r=>`<div class="rank-item"><div style="flex:1;font-size:13px;color:var(--text)">${escHtml(r.movies?.title||'Unknown')}</div><div style="font-size:13px;font-weight:500;color:${r.perfect?'var(--gold)':r.score>=3?'#6fcf97':'var(--text-hint)'}">${r.score}/5${r.perfect?' ★':''}</div></div>`).join('')}
+  ${starMovies.length ? `
+  <div class="block">
+    <div class="block-title">Stars earned</div>
+    <div class="stars-grid">${starMovies.map(r => `<div class="star-chip">★ ${escHtml(r.movies?.title || '')}</div>`).join('')}</div>
+  </div>` : ''}
+  <div class="block">
+    <div class="block-title">All quiz results</div>
+    ${data.map(r => `
+    <div class="rank-item">
+      <div style="flex:1;font-size:13px;color:var(--text)">${escHtml(r.movies?.title || 'Unknown')}</div>
+      <div style="font-size:13px;font-weight:500;color:${r.perfect ? 'var(--gold)' : r.score >= 3 ? '#6fcf97' : 'var(--text-hint)'}">${r.score}/5${r.perfect ? ' ★' : ''}</div>
+    </div>`).join('')}
   </div>`;
 }
 
 function shareProfile() {
-  const text = `Check out my MOVIEZ profile — I'm a ${getRank(currentProfile?.total_watched||0)}!`;
-  if (navigator.share) { navigator.share({ title:'MOVIEZ', text, url: window.location.href }); }
+  const text = `Check out my MOVIEZ profile — I'm a ${getRank(currentProfile?.total_watched || 0)}!`;
+  if (navigator.share) { navigator.share({ title: 'MOVIEZ', text, url: window.location.href }); }
   else { navigator.clipboard.writeText(window.location.href); toast('Link copied!'); }
 }
 
