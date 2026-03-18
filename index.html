@@ -86,7 +86,7 @@ async function init() {
 }
 
 async function loadTodayMovie() {
-  const today = new Date().toISOString().split('T')[0];
+  const today = new Date(new Date().getTime() - new Date().getTimezoneOffset() * 60000).toISOString().split('T')[0];
   const { data, error } = await sb.from('movies')
     .select('*')
     .lte('scheduled_date', today)
