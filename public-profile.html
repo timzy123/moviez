@@ -8,9 +8,19 @@
 <link href="https://fonts.googleapis.com/css2?family=DM+Sans:wght@300;400;500&display=swap" rel="stylesheet"/>
 <link rel="stylesheet" href="main.css"/>
 <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
+<style>
+.avatar-modal-overlay{position:fixed;top:0;left:0;right:0;bottom:0;background:rgba(0,0,0,0.85);z-index:200;display:flex;align-items:center;justify-content:center}
+.avatar-modal-img{max-width:90vw;max-height:90vh;border-radius:12px;object-fit:contain}
+.avatar-modal-close{position:fixed;top:20px;right:20px;font-size:28px;color:#fff;cursor:pointer;z-index:201;line-height:1}
+.quote-block{font-size:13px;color:var(--text-muted);font-style:italic;line-height:1.6;padding:10px 14px;background:var(--surface2);border-left:2px solid var(--red);border-radius:0 8px 8px 0}
+.fav-row{font-size:13px;color:var(--text-muted);padding:8px 0;display:flex;align-items:center;justify-content:space-between;border-bottom:0.5px solid var(--border2)}
+.fav-row:last-child{border-bottom:none}
+.fav-label{font-size:11px;color:var(--text-hint)}
+</style>
 </head>
 <body>
 <div id="toast" class="toast"></div>
+<div id="avatar-modal" style="display:none"></div>
 
 <nav class="nav">
   <span class="back-btn" onclick="history.back()" style="cursor:pointer">‹ Back</span>
@@ -26,15 +36,27 @@
 
 <script src="supabase.js"></script>
 <script>
+function showAvatarModal(url) {
+  const modal = document.getElementById('avatar-modal');
+  modal.style.display = 'block';
+  modal.innerHTML = `
+    <div class="avatar-modal-overlay" onclick="closeAvatarModal()">
+      <span class="avatar-modal-close" onclick="closeAvatarModal()">✕</span>
+      <img class="avatar-modal-img" src="${escHtml(url)}" onclick="event.stopPropagation()"/>
+    </div>`;
+}
+
+function closeAvatarModal() {
+  const modal = document.getElementById('avatar-modal');
+  modal.style.display = 'none';
+  modal.innerHTML = '';
+}
+
 async function init() {
   const userId = localStorage.getItem('moviez_view_profile_id');
   if (!userId) { window.location.href = 'index.html'; return; }
 
-  const { data: p, error } = await sb.from('profiles')
-    .select('*')
-    .eq('id', userId)
-    .single();
-
+  const { data: p, error } = await sb.from('profiles').select('*').eq('id', userId).single();
   if (error || !p) {
     document.getElementById('profile-area').innerHTML = `<div class="loading"><p>Profile not found.</p></div>`;
     return;
@@ -80,7 +102,9 @@ async function init() {
   document.getElementById('profile-area').innerHTML = `
   <div class="profile-hero">
     <div class="profile-top">
-      <div class="avatar-lg" style="overflow:hidden;padding:0">${avatarHtml}</div>
+      <div class="avatar-lg" id="avatar-display" style="overflow:hidden;padding:0;${p.avatar_url ? 'cursor:pointer' : ''}">
+        ${avatarHtml}
+      </div>
       <div>
         <div class="profile-name">${escHtml(p.username)}</div>
         <div class="profile-join">Member since ${joined}</div>
@@ -93,6 +117,27 @@ async function init() {
       <div class="stat-card"><div class="stat-val">${stars}</div><div class="stat-label">Stars earned</div></div>
     </div>
   </div>
+
+  ${p.favorite_quote ? `
+  <div class="block">
+    <div class="block-title">Favourite movie line</div>
+    <div class="quote-block">"${escHtml(p.favorite_quote)}"</div>
+  </div>` : ''}
+
+  ${p.favorite_movie_alltime || p.favorite_movie_now ? `
+  <div class="block">
+    <div class="block-title">Favourite films</div>
+    ${p.favorite_movie_alltime ? `
+    <div class="fav-row">
+      <span>${escHtml(p.favorite_movie_alltime)}</span>
+      <span class="fav-label">All time</span>
+    </div>` : ''}
+    ${p.favorite_movie_now ? `
+    <div class="fav-row">
+      <span>${escHtml(p.favorite_movie_now)}</span>
+      <span class="fav-label">Right now</span>
+    </div>` : ''}
+  </div>` : ''}
 
   ${starMovies.length ? `
   <div class="block">
@@ -117,6 +162,10 @@ async function init() {
       <div style="font-size:13px;font-weight:500;color:${r.perfect ? 'var(--gold)' : r.score >= 3 ? '#6fcf97' : 'var(--text-hint)'}">${r.score}/5${r.perfect ? ' ★' : ''}</div>
     </div>`).join('')}
   </div>` : ''}`;
+
+  if (p.avatar_url) {
+    document.getElementById('avatar-display').addEventListener('click', () => showAvatarModal(p.avatar_url));
+  }
 }
 
 init();
