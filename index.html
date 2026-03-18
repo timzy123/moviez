@@ -17,7 +17,7 @@
   <div class="nav-right">
     <div class="streak-pill"><div class="streak-dot"></div><span id="streak-count">0 day streak</span></div>
     <div class="rank-badge" id="user-rank">Newbie</div>
-    <div class="avatar" id="user-avatar" onclick="window.location.href='profile.html'">?</div>
+    <div class="avatar" id="user-avatar" onclick="window.location.href='profile.html'" style="overflow:hidden;padding:0;cursor:pointer">?</div>
   </div>
 </nav>
 
@@ -72,12 +72,12 @@ async function init() {
 
   if (currentProfile) {
     const avatarEl = document.getElementById('user-avatar');
-if (currentProfile.avatar_url) {
-  avatarEl.innerHTML = `<img src="${currentProfile.avatar_url}" style="width:100%;height:100%;object-fit:cover;border-radius:50%;"/>`;
-  avatarEl.style.padding = '0';
-} else {
-  avatarEl.textContent = currentProfile.username.slice(0,2).toUpperCase();
-}
+    if (currentProfile.avatar_url) {
+      avatarEl.innerHTML = `<img src="${currentProfile.avatar_url}" style="width:100%;height:100%;object-fit:cover;border-radius:50%;"/>`;
+      avatarEl.style.padding = '0';
+    } else {
+      avatarEl.textContent = currentProfile.username.slice(0, 2).toUpperCase();
+    }
     document.getElementById('user-rank').textContent = getRank(currentProfile.total_watched || 0);
     document.getElementById('streak-count').textContent = (currentProfile.streak_count || 0) + ' day streak';
   }
@@ -87,11 +87,18 @@ if (currentProfile.avatar_url) {
 
 async function loadTodayMovie() {
   const today = new Date().toISOString().split('T')[0];
-  const { data, error } = await sb.from('movies').select('*').eq('scheduled_date', today).single();
+  const { data, error } = await sb.from('movies')
+    .select('*')
+    .lte('scheduled_date', today)
+    .order('scheduled_date', { ascending: false })
+    .limit(1)
+    .single();
+
   if (error || !data) {
     document.getElementById('movie-area').innerHTML = `<div class="loading"><p>No film scheduled for today yet. Check back soon!</p></div>`;
     return;
   }
+
   todayMovie = data;
   localStorage.setItem('moviez_today_movie_id', data.id);
   localStorage.setItem('moviez_today_movie_title', data.title);
@@ -138,7 +145,10 @@ async function loadTodayMovie() {
 async function loadUserRating() {
   if (!currentUser || !todayMovie) return;
   const { data } = await sb.from('ratings')
-    .select('score').eq('user_id', currentUser.id).eq('movie_id', todayMovie.id).single();
+    .select('score')
+    .eq('user_id', currentUser.id)
+    .eq('movie_id', todayMovie.id)
+    .single();
   if (data) {
     document.querySelectorAll('.star').forEach((s, i) => s.classList.toggle('active', i < data.score));
     document.getElementById('rate-hint').textContent = 'Your rating: ' + data.score + '/5';
@@ -158,9 +168,10 @@ async function rate(val) {
 
 async function loadComments() {
   if (!todayMovie) return;
+
   const [commentsRes, likesRes] = await Promise.all([
     sb.from('comments')
-      .select('*, profiles(username, total_watched)')
+      .select('*, profiles(id, username, total_watched, avatar_url)')
       .eq('movie_id', todayMovie.id)
       .order('created_at', { ascending: false })
       .limit(50),
@@ -171,26 +182,41 @@ async function loadComments() {
 
   const { data, error } = commentsRes;
   const likedIds = new Set((likesRes.data || []).map(l => l.comment_id));
-
   const list = document.getElementById('comments-list');
   if (!list) return;
+
   if (error || !data || data.length === 0) {
     list.innerHTML = `<div class="no-comments">No comments yet — be the first to share your thoughts!</div>`;
     return;
   }
+
   list.innerHTML = data.map(c => {
-    const uname = c.profiles?.username || 'Anonymous';
-    const rank  = getRank(c.profiles?.total_watched || 0);
+    const uname    = c.profiles?.username || 'Anonymous';
+    const rank     = getRank(c.profiles?.total_watched || 0);
+    const avatar   = c.profiles?.avatar_url;
+    const userId   = c.profiles?.id || c.user_id;
+    const initials = uname.slice(0, 2).toUpperCase();
+    const avatarHtml = avatar
+      ? `<img src="${escHtml(avatar)}" style="width:100%;height:100%;object-fit:cover;border-radius:50%"/>`
+      : initials;
+
     return `<div class="comment">
-      <div class="comment-header"><div class="comment-user">
-        <div class="user-dot">${uname.slice(0,2).toUpperCase()}</div>
-        <span>${escHtml(uname)}</span>
-        <span class="comment-rank">${rank}</span>
-      </div></div>
+      <div class="comment-header">
+        <div class="comment-user">
+          <div class="user-dot" onclick="viewProfile('${escHtml(userId)}')" style="cursor:pointer;overflow:hidden;padding:0">${avatarHtml}</div>
+          <span onclick="viewProfile('${escHtml(userId)}')" style="cursor:pointer;text-decoration:underline;text-underline-offset:2px">${escHtml(uname)}</span>
+          <span class="comment-rank">${rank}</span>
+        </div>
+      </div>
       <div class="comment-body">${escHtml(c.body)}</div>
       <div class="comment-time">${timeAgo(c.created_at)} · <span class="like-btn ${likedIds.has(c.id) ? 'liked' : ''}" onclick="likeComment('${c.id}', this)">♥ ${c.like_count || 0}</span></div>
     </div>`;
   }).join('');
+}
+
+function viewProfile(userId) {
+  localStorage.setItem('moviez_view_profile_id', userId);
+  window.location.href = 'public-profile.html';
 }
 
 async function postComment() {
@@ -212,29 +238,24 @@ function shareApp() {
   if (navigator.share) { navigator.share({ title: 'MOVIEZ', text, url: window.location.href }); }
   else { navigator.clipboard.writeText(window.location.href); toast('Link copied!'); }
 }
+
 document.addEventListener('keydown', function(e) {
   if (e.key === 'Enter' && document.activeElement.id === 'comment-input') {
     postComment();
   }
 });
-  
+
 async function likeComment(commentId, el) {
   if (!currentUser) { toast('Sign in to like comments.'); return; }
-
   const alreadyLiked = el.classList.contains('liked');
-
   if (alreadyLiked) {
     el.classList.remove('liked');
     const current = parseInt(el.textContent.replace('♥ ', '')) || 0;
     el.textContent = '♥ ' + Math.max(current - 1, 0);
-    await sb.from('comment_likes')
-      .delete()
-      .eq('user_id', currentUser.id)
-      .eq('comment_id', commentId);
+    await sb.from('comment_likes').delete().eq('user_id', currentUser.id).eq('comment_id', commentId);
     await sb.rpc('decrement_like', { comment_id: commentId });
   } else {
-    const { error } = await sb.from('comment_likes')
-      .insert({ user_id: currentUser.id, comment_id: commentId });
+    const { error } = await sb.from('comment_likes').insert({ user_id: currentUser.id, comment_id: commentId });
     if (error) { toast('Already liked!'); return; }
     el.classList.add('liked');
     const current = parseInt(el.textContent.replace('♥ ', '')) || 0;
@@ -242,7 +263,7 @@ async function likeComment(commentId, el) {
     await sb.rpc('increment_like', { comment_id: commentId });
   }
 }
-  
+
 init();
 </script>
 </body>
