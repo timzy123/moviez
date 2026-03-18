@@ -20,6 +20,7 @@
 .fav-movie-display{font-size:13px;color:var(--text-muted);padding:8px 0;cursor:pointer;display:flex;align-items:center;justify-content:space-between}
 .fav-movie-display:hover{color:var(--text)}
 .edit-hint{font-size:11px;color:var(--text-hint);margin-top:6px}
+.av-btn{font-size:11px;background:none;border:none;cursor:pointer;padding:0;display:block;text-align:center;line-height:1.8}
 </style>
 </head>
 <body>
@@ -166,11 +167,16 @@ function renderProfile() {
   document.getElementById('pane-profile').innerHTML = `
   <div class="profile-hero">
     <div class="profile-top">
-      <div class="avatar-lg" id="avatar-display" style="cursor:pointer;overflow:hidden;position:relative">
-        ${avatarHtml}
-        <div style="position:absolute;bottom:0;left:0;right:0;background:rgba(0,0,0,0.5);font-size:9px;color:#fff;text-align:center;padding:3px 0">
-          ${p.avatar_url ? 'View / Edit' : 'Add photo'}
+      <div style="display:flex;flex-direction:column;align-items:center;gap:4px">
+        <div class="avatar-lg" id="avatar-display" style="cursor:pointer;overflow:hidden;position:relative">
+          ${avatarHtml}
         </div>
+        <button class="av-btn" id="view-btn" style="color:var(--text-hint)">
+          ${p.avatar_url ? 'View photo' : 'Add photo'}
+        </button>
+        ${p.avatar_url
+          ? `<button class="av-btn" id="change-btn" style="color:var(--red)">Change photo</button>`
+          : `<span id="change-btn" style="display:none"></span>`}
       </div>
       <div>
         <div class="profile-name">${escHtml(p.username)}</div>
@@ -228,12 +234,19 @@ function renderProfile() {
   <button class="action-btn" style="width:100%;color:#eb5757;border-color:#7d2e2e" onclick="doLogout()">Sign out</button>`;
 
   document.getElementById('avatar-display').addEventListener('click', () => {
-    if (currentProfile?.avatar_url) {
-      showAvatarModal(currentProfile.avatar_url);
-    } else {
-      document.getElementById('avatar-input').click();
-    }
+    if (currentProfile?.avatar_url) { showAvatarModal(currentProfile.avatar_url); }
+    else { document.getElementById('avatar-input').click(); }
   });
+
+  document.getElementById('view-btn').addEventListener('click', () => {
+    if (currentProfile?.avatar_url) { showAvatarModal(currentProfile.avatar_url); }
+    else { document.getElementById('avatar-input').click(); }
+  });
+
+  const changeBtn = document.getElementById('change-btn');
+  if (changeBtn && changeBtn.tagName === 'BUTTON') {
+    changeBtn.addEventListener('click', () => document.getElementById('avatar-input').click());
+  }
 }
 
 function editField(field) {
