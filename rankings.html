@@ -42,6 +42,20 @@ let currentUser    = null;
 let currentProfile = null;
 const posClasses   = ['gold','silver','bronze'];
 
+function viewProfile(userId) {
+  localStorage.setItem('moviez_view_profile_id', userId);
+  window.location.href = 'public-profile.html';
+}
+
+function avatarHtml(avatarUrl, username, userId, isMe) {
+  const initials = (username || '?').slice(0, 2).toUpperCase();
+  const cls = `lb-av${isMe ? ' me' : ''}`;
+  const img = avatarUrl
+    ? `<img src="${escHtml(avatarUrl)}" style="width:100%;height:100%;object-fit:cover;border-radius:50%"/>`
+    : initials;
+  return `<div class="${cls}" onclick="viewProfile('${escHtml(userId)}')" style="cursor:pointer;overflow:hidden;padding:0">${img}</div>`;
+}
+
 async function init() {
   const auth = await requireAuth();
   if (!auth) return;
@@ -59,15 +73,23 @@ async function loadMonthly() {
   const monthEnd   = new Date(now.getFullYear(), now.getMonth() + 1, 0, 23, 59, 59).toISOString();
 
   const { data } = await sb.from('quiz_results')
-    .select('user_id, profiles(username, total_watched)')
-    .gte('created_at', monthStart).lte('created_at', monthEnd);
+    .select('user_id, profiles(id, username, total_watched, avatar_url)')
+    .gte('created_at', monthStart)
+    .lte('created_at', monthEnd);
 
   const counts = {};
   (data || []).forEach(r => {
     const uid = r.user_id;
-    if (!counts[uid]) counts[uid] = { username: r.profiles?.username || '?', watched: r.profiles?.total_watched || 0, count: 0 };
+    if (!counts[uid]) counts[uid] = {
+      id: r.profiles?.id || uid,
+      username: r.profiles?.username || '?',
+      watched: r.profiles?.total_watched || 0,
+      avatar_url: r.profiles?.avatar_url || null,
+      count: 0
+    };
     counts[uid].count++;
   });
+
   const sorted = Object.values(counts).sort((a, b) => b.count - a.count).slice(0, 10);
   const myPos  = sorted.findIndex(c => c.username === currentProfile?.username);
 
@@ -83,12 +105,12 @@ async function loadMonthly() {
   <div class="lb-list">
     ${sorted.length ? sorted.map((u, i) => {
       const isMe = u.username === currentProfile?.username;
-      return `<div class="lb-item${isMe?' me':''}">
-        <div class="lb-pos ${posClasses[i]||''}">${i+1}</div>
-        <div class="lb-av${isMe?' me':''}">${u.username.slice(0,2).toUpperCase()}</div>
+      return `<div class="lb-item${isMe ? ' me' : ''}" style="cursor:pointer" onclick="viewProfile('${escHtml(u.id)}')">
+        <div class="lb-pos ${posClasses[i] || ''}">${i+1}</div>
+        ${avatarHtml(u.avatar_url, u.username, u.id, isMe)}
         <div class="lb-info">
-          <div class="lb-name">${escHtml(u.username)}${isMe?' <span style="font-size:11px;color:#C0392B">(you)</span>':''}</div>
-          <div class="lb-meta"><span class="lb-badge${isMe?' me':''}">${getRank(u.watched)}</span></div>
+          <div class="lb-name">${escHtml(u.username)}${isMe ? ' <span style="font-size:11px;color:#C0392B">(you)</span>' : ''}</div>
+          <div class="lb-meta"><span class="lb-badge${isMe ? ' me' : ''}">${getRank(u.watched)}</span></div>
         </div>
         <div class="lb-score"><div class="lb-val">${u.count}</div><div class="lb-val-label">films</div></div>
       </div>`;
@@ -96,18 +118,23 @@ async function loadMonthly() {
   </div>
   ${myPos === -1 && currentProfile ? `
   <div class="lb-section-label">Your spot</div>
-  <div class="lb-list"><div class="lb-item me">
-    <div class="lb-pos" style="color:#C0392B">-</div>
-    <div class="lb-av me">${currentProfile.username.slice(0,2).toUpperCase()}</div>
-    <div class="lb-info"><div class="lb-name">${escHtml(currentProfile.username)} <span style="font-size:11px;color:#C0392B">(you)</span></div></div>
-    <div class="lb-score"><div class="lb-val">0</div><div class="lb-val-label">films</div></div>
-  </div></div>` : ''}`;
+  <div class="lb-list">
+    <div class="lb-item me" onclick="viewProfile('${escHtml(currentUser.id)}')" style="cursor:pointer">
+      <div class="lb-pos" style="color:#C0392B">-</div>
+      ${avatarHtml(currentProfile.avatar_url, currentProfile.username, currentUser.id, true)}
+      <div class="lb-info">
+        <div class="lb-name">${escHtml(currentProfile.username)} <span style="font-size:11px;color:#C0392B">(you)</span></div>
+        <div class="lb-meta"><span class="lb-badge me">${getRank(currentProfile.total_watched || 0)}</span></div>
+      </div>
+      <div class="lb-score"><div class="lb-val">0</div><div class="lb-val-label">films</div></div>
+    </div>
+  </div>` : ''}`;
 }
 
 async function loadStreaks() {
   const pane = document.getElementById('pane-streaks');
   const { data } = await sb.from('profiles')
-    .select('username, streak_count, total_watched')
+    .select('id, username, streak_count, total_watched, avatar_url')
     .order('streak_count', { ascending: false })
     .limit(10);
 
@@ -118,16 +145,16 @@ async function loadStreaks() {
   </div>
   <div class="lb-section-label">Longest active streaks</div>
   <div class="lb-list">
-    ${(data||[]).map((u, i) => {
+    ${(data || []).map((u, i) => {
       const isMe = u.username === currentProfile?.username;
-      return `<div class="lb-item${isMe?' me':''}">
-        <div class="lb-pos ${posClasses[i]||''}">${i+1}</div>
-        <div class="lb-av${isMe?' me':''}">${(u.username||'?').slice(0,2).toUpperCase()}</div>
+      return `<div class="lb-item${isMe ? ' me' : ''}" onclick="viewProfile('${escHtml(u.id)}')" style="cursor:pointer">
+        <div class="lb-pos ${posClasses[i] || ''}">${i+1}</div>
+        ${avatarHtml(u.avatar_url, u.username, u.id, isMe)}
         <div class="lb-info">
-          <div class="lb-name">${escHtml(u.username||'')}${isMe?' <span style="font-size:11px;color:#C0392B">(you)</span>':''}</div>
-          <div class="lb-meta"><span class="lb-badge${isMe?' me':''}">${getRank(u.total_watched||0)}</span></div>
+          <div class="lb-name">${escHtml(u.username || '')}${isMe ? ' <span style="font-size:11px;color:#C0392B">(you)</span>' : ''}</div>
+          <div class="lb-meta"><span class="lb-badge${isMe ? ' me' : ''}">${getRank(u.total_watched || 0)}</span></div>
         </div>
-        <div class="lb-score"><div class="lb-val" style="color:#C0392B">🔥 ${u.streak_count||0}</div><div class="lb-val-label">days</div></div>
+        <div class="lb-score"><div class="lb-val" style="color:#C0392B">🔥 ${u.streak_count || 0}</div><div class="lb-val-label">days</div></div>
       </div>`;
     }).join('')}
   </div>`;
@@ -154,10 +181,10 @@ async function loadCommunity() {
   const movieCounts = {};
   (commentData || []).forEach(c => {
     const id = c.movie_id;
-    if (!movieCounts[id]) movieCounts[id] = { title: c.movies?.title||'', director: c.movies?.director||'', year: c.movies?.year||'', count: 0 };
+    if (!movieCounts[id]) movieCounts[id] = { title: c.movies?.title || '', director: c.movies?.director || '', year: c.movies?.year || '', count: 0 };
     movieCounts[id].count++;
   });
-  const topDiscussed = Object.values(movieCounts).sort((a,b) => b.count - a.count).slice(0,3);
+  const topDiscussed = Object.values(movieCounts).sort((a, b) => b.count - a.count).slice(0, 3);
 
   pane.innerHTML = `
   <div class="community-banner">
@@ -165,14 +192,15 @@ async function loadCommunity() {
     <div class="banner-text">Everyone watched the <strong>same film today</strong> — you're never watching alone</div>
   </div>
   <div style="display:flex;flex-wrap:wrap;gap:8px;margin-bottom:20px">
-    <div class="streak-pill">${todayWatchers||0} watched today</div>
-    <div class="streak-pill">${todayComments||0} comments today</div>
+    <div class="streak-pill">${todayWatchers || 0} watched today</div>
+    <div class="streak-pill">${todayComments || 0} comments today</div>
   </div>
   ${topDiscussed.length ? `
   <div class="lb-section-label">Most discussed</div>
   <div class="lb-list">
-    ${topDiscussed.map((m,i) => `<div class="lb-item">
-      <div class="lb-pos ${posClasses[i]||''}">${i+1}</div>
+    ${topDiscussed.map((m, i) => `
+    <div class="lb-item">
+      <div class="lb-pos ${posClasses[i] || ''}">${i+1}</div>
       <div class="lb-info">
         <div class="lb-name">${escHtml(m.title)}</div>
         <div style="font-size:11px;color:#555;margin-top:2px">${escHtml(m.director)} · ${m.year}</div>
@@ -181,7 +209,7 @@ async function loadCommunity() {
     </div>`).join('')}
   </div>` : ''}
   <div style="text-align:center;padding:24px 0 8px">
-    <div style="font-size:24px;font-weight:500;margin-bottom:4px">${totalMembers||0}</div>
+    <div style="font-size:24px;font-weight:500;margin-bottom:4px">${totalMembers || 0}</div>
     <div style="font-size:13px;color:#555">total members worldwide</div>
   </div>`;
 }
@@ -197,3 +225,4 @@ init();
 </script>
 </body>
 </html>
+
