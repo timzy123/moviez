@@ -1,0 +1,125 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8"/>
+<meta name="viewport" content="width=device-width, initial-scale=1.0"/>
+<title>MOVIEZ — Profile</title>
+<link rel="preconnect" href="https://fonts.googleapis.com"/>
+<link href="https://fonts.googleapis.com/css2?family=DM+Sans:wght@300;400;500&display=swap" rel="stylesheet"/>
+<link rel="stylesheet" href="main.css"/>
+<script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
+</head>
+<body>
+<div id="toast" class="toast"></div>
+
+<nav class="nav">
+  <span class="back-btn" onclick="history.back()" style="cursor:pointer">‹ Back</span>
+  <div class="logo">MOVIE<span>Z</span></div>
+  <div style="width:80px"></div>
+</nav>
+
+<main>
+  <div id="profile-area">
+    <div class="loading"><div class="loading-dot"></div><p>Loading profile...</p></div>
+  </div>
+</main>
+
+<script src="supabase.js"></script>
+<script>
+async function init() {
+  const userId = localStorage.getItem('moviez_view_profile_id');
+  if (!userId) { window.location.href = 'index.html'; return; }
+
+  const { data: p, error } = await sb.from('profiles')
+    .select('*')
+    .eq('id', userId)
+    .single();
+
+  if (error || !p) {
+    document.getElementById('profile-area').innerHTML = `<div class="loading"><p>Profile not found.</p></div>`;
+    return;
+  }
+
+  const watched  = p.total_watched || 0;
+  const streak   = p.streak_count  || 0;
+  const stars    = p.stars_earned  || 0;
+  const rank     = getRank(watched);
+  const joined   = new Date(p.joined_date || Date.now()).toLocaleDateString('en-GB', { month: 'long', year: 'numeric' });
+  const initials = p.username.slice(0, 2).toUpperCase();
+
+  const avatarHtml = p.avatar_url
+    ? `<img src="${escHtml(p.avatar_url)}" style="width:100%;height:100%;object-fit:cover;border-radius:50%"/>`
+    : initials;
+
+  const rankDefs = [
+    {name:'Newbie',min:0,max:9},
+    {name:'Movie Watcher',min:10,max:19},
+    {name:'Movie Buff',min:20,max:29},
+    {name:'Movie Freak',min:30,max:49},
+    {name:'Cinephile',min:50,max:99},
+    {name:'Cinéaste',min:100,max:9999}
+  ];
+
+  const rankListHtml = rankDefs.map((r, i) => {
+    let barCls = 'rank-bar', nameCls = 'rank-name', w = '0%';
+    if (watched > r.max)       { barCls = 'rank-bar done';    nameCls = 'rank-name done';    w = '100%'; }
+    else if (watched >= r.min) { barCls = 'rank-bar current'; nameCls = 'rank-name current'; w = Math.round(((watched - r.min) / (r.max - r.min + 1)) * 100) + '%'; }
+    return `<div class="rank-item"><span class="rank-n">${i+1}</span><div class="rank-bar-wrap"><div class="${barCls}" style="width:${w}"></div></div><span class="${nameCls}">${r.name}</span><span class="rank-movies">${r.min===100?'100+':r.min===0?'1–9':r.min}</span></div>`;
+  }).join('');
+
+  const next = rankDefs.find(r => watched < r.min);
+
+  const { data: quizData } = await sb.from('quiz_results')
+    .select('score, perfect, movies(title)')
+    .eq('user_id', userId)
+    .order('created_at', { ascending: false })
+    .limit(20);
+
+  const starMovies = (quizData || []).filter(r => r.perfect);
+
+  document.getElementById('profile-area').innerHTML = `
+  <div class="profile-hero">
+    <div class="profile-top">
+      <div class="avatar-lg" style="overflow:hidden;padding:0">${avatarHtml}</div>
+      <div>
+        <div class="profile-name">${escHtml(p.username)}</div>
+        <div class="profile-join">Member since ${joined}</div>
+        <div class="rank-badge-lg">${rank}</div>
+      </div>
+    </div>
+    <div class="stats-grid">
+      <div class="stat-card"><div class="stat-val">${watched}</div><div class="stat-label">Films watched</div></div>
+      <div class="stat-card"><div class="stat-val">${streak}</div><div class="stat-label">Day streak</div></div>
+      <div class="stat-card"><div class="stat-val">${stars}</div><div class="stat-label">Stars earned</div></div>
+    </div>
+  </div>
+
+  ${starMovies.length ? `
+  <div class="block">
+    <div class="block-title">Stars earned</div>
+    <div class="stars-grid">${starMovies.map(r => `<div class="star-chip">★ ${escHtml(r.movies?.title || '')}</div>`).join('')}</div>
+  </div>` : ''}
+
+  <div class="block">
+    <div class="block-title">Rank journey</div>
+    <div class="rank-list">${rankListHtml}</div>
+    ${next
+      ? `<div class="rank-next">${next.min - watched} more films to reach <span style="color:var(--red)">${next.name}</span></div>`
+      : `<div class="rank-next" style="color:var(--gold)">Highest rank reached — Cinéaste!</div>`}
+  </div>
+
+  ${quizData && quizData.length ? `
+  <div class="block">
+    <div class="block-title">Recent quiz results</div>
+    ${quizData.map(r => `
+    <div class="rank-item">
+      <div style="flex:1;font-size:13px;color:var(--text)">${escHtml(r.movies?.title || 'Unknown')}</div>
+      <div style="font-size:13px;font-weight:500;color:${r.perfect ? 'var(--gold)' : r.score >= 3 ? '#6fcf97' : 'var(--text-hint)'}">${r.score}/5${r.perfect ? ' ★' : ''}</div>
+    </div>`).join('')}
+  </div>` : ''}`;
+}
+
+init();
+</script>
+</body>
+</html>
