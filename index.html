@@ -105,6 +105,7 @@ async function loadTodayMovie() {
         <div class="today-label">Today's film</div>
         <div class="movie-title">${escHtml(data.title)}</div>
         <div class="movie-meta">${data.year || ''} · ${escHtml(data.director || '')} · ${escHtml(data.genre || '')}</div>
+        <div class="mantra" style="margin-top:8px;font-style:normal;color:var(--text-muted)">${escHtml(data.synopsis || '')}</div>
         <div class="ratings-row">
           ${data.imdb_rating ? `<div class="rating-badge"><span class="dot imdb"></span>IMDb ${data.imdb_rating}</div>` : ''}
           ${data.rt_rating   ? `<div class="rating-badge"><span class="dot rt"></span>RT ${data.rt_rating}%</div>` : ''}
