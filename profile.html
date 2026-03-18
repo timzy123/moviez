@@ -8,6 +8,20 @@
 <link href="https://fonts.googleapis.com/css2?family=DM+Sans:wght@300;400;500&display=swap" rel="stylesheet"/>
 <link rel="stylesheet" href="main.css"/>
 <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
+<style>
+.crop-overlay{display:none;position:fixed;inset:0;background:rgba(0,0,0,0.88);z-index:1000;flex-direction:column;align-items:center;justify-content:center;padding:20px}
+.crop-overlay.show{display:flex}
+.crop-title{font-size:15px;font-weight:500;color:#f0ede8;margin-bottom:16px}
+.crop-canvas-wrap{position:relative;width:280px;height:280px;border-radius:50%;overflow:hidden;border:2px solid #C0392B;cursor:move;background:#1a1a1a;flex-shrink:0;touch-action:none}
+.crop-hint{font-size:12px;color:#888;margin-top:12px;text-align:center}
+.crop-zoom{display:flex;align-items:center;gap:10px;margin-top:14px;width:280px}
+.crop-zoom label{font-size:12px;color:#888;white-space:nowrap}
+.crop-zoom input{flex:1}
+.crop-btns{display:flex;gap:10px;margin-top:16px;width:280px}
+.crop-btn-cancel{flex:1;padding:12px;background:#1a1a1a;border:0.5px solid #2a2a2a;border-radius:10px;color:#888;font-size:14px;font-family:var(--font);cursor:pointer}
+.crop-btn-save{flex:1;padding:12px;background:#C0392B;border:none;border-radius:10px;color:#fff;font-size:14px;font-weight:500;font-family:var(--font);cursor:pointer}
+.crop-btn-save:disabled{background:#555;cursor:not-allowed}
+</style>
 </head>
 <body>
 <div id="toast" class="toast"></div>
@@ -16,11 +30,7 @@
   <div class="logo">MOVIE<span>Z</span></div>
   <div class="nav-right">
     <button class="action-btn" style="flex:none;padding:6px 14px;font-size:12px" onclick="window.location.href='rankings.html'">Rankings</button>
-    <div class="avatar" id="nav-avatar" style="overflow:hidden;padding:0">
-  ${currentProfile?.avatar_url
-    ? `<img src="${escHtml(currentProfile.avatar_url)}" style="width:100%;height:100%;object-fit:cover;border-radius:50%"/>`
-    : (currentProfile?.username || '?').slice(0,2).toUpperCase()}
-</div>
+    <div class="avatar" id="nav-avatar" style="overflow:hidden;padding:0"></div>
   </div>
 </nav>
 
@@ -29,71 +39,208 @@
     <button class="tab active" onclick="switchTab('profile', this)">My profile</button>
     <button class="tab" onclick="switchTab('history', this)">Quiz history</button>
   </div>
-
   <div class="pane active" id="pane-profile">
     <div class="loading"><div class="loading-dot"></div><p>Loading your profile...</p></div>
   </div>
-
   <div class="pane" id="pane-history">
     <div class="loading"><div class="loading-dot"></div><p>Loading quiz history...</p></div>
   </div>
 </main>
 
+<input type="file" id="avatar-input" accept="image/*" style="display:none" onchange="openCropper(this)"/>
+
+<div class="crop-overlay" id="crop-overlay">
+  <div class="crop-title">Adjust your photo</div>
+  <div class="crop-canvas-wrap" id="crop-wrap">
+    <canvas id="crop-canvas" width="280" height="280"></canvas>
+  </div>
+  <div class="crop-hint">Drag to reposition · Use slider to zoom</div>
+  <div class="crop-zoom">
+    <label>Zoom</label>
+    <input type="range" id="zoom-slider" min="0.1" max="3" step="0.01" value="1" oninput="drawCrop()"/>
+  </div>
+  <div class="crop-btns">
+    <button class="crop-btn-cancel" onclick="closeCropper()">Cancel</button>
+    <button class="crop-btn-save" id="crop-save-btn" onclick="saveCrop()">Save photo</button>
+  </div>
+</div>
+
 <script src="supabase.js"></script>
 <script>
-let currentUser   = null;
+let currentUser = null;
 let currentProfile = null;
 
+/* ── CROPPER ── */
+let cropImage = null;
+let cropX = 0, cropY = 0;
+let isDragging = false;
+let dragStartX = 0, dragStartY = 0;
+let imgStartX = 0, imgStartY = 0;
+
+function openCropper(input) {
+  const file = input.files && input.files[0];
+  if (!file) return;
+  if (file.size > 10 * 1024 * 1024) { toast('Image must be under 10MB.'); return; }
+  const reader = new FileReader();
+  reader.onload = (e) => {
+    cropImage = new Image();
+    cropImage.onload = () => {
+      const minZoom = Math.max(280 / cropImage.width, 280 / cropImage.height);
+      const slider = document.getElementById('zoom-slider');
+      slider.min = minZoom.toFixed(3);
+      slider.max = (minZoom * 3).toFixed(3);
+      slider.value = minZoom.toFixed(3);
+      cropX = (280 - cropImage.width * minZoom) / 2;
+      cropY = (280 - cropImage.height * minZoom) / 2;
+      drawCrop();
+      document.getElementById('crop-overlay').classList.add('show');
+    };
+    cropImage.src = e.target.result;
+  };
+  reader.readAsDataURL(file);
+  input.value = '';
+}
+
+function drawCrop() {
+  if (!cropImage) return;
+  const canvas = document.getElementById('crop-canvas');
+  const ctx = canvas.getContext('2d');
+  const zoom = parseFloat(document.getElementById('zoom-slider').value);
+  const scaledW = cropImage.width * zoom;
+  const scaledH = cropImage.height * zoom;
+  cropX = Math.min(0, Math.max(280 - scaledW, cropX));
+  cropY = Math.min(0, Math.max(280 - scaledH, cropY));
+  ctx.clearRect(0, 0, 280, 280);
+  ctx.drawImage(cropImage, cropX, cropY, scaledW, scaledH);
+}
+
+function closeCropper() {
+  document.getElementById('crop-overlay').classList.remove('show');
+  cropImage = null;
+}
+
+async function saveCrop() {
+  if (!cropImage) return;
+  const btn = document.getElementById('crop-save-btn');
+  btn.disabled = true;
+  btn.textContent = 'Saving...';
+  const canvas = document.getElementById('crop-canvas');
+  canvas.toBlob(async (blob) => {
+    try {
+      const path = `${currentUser.id}/avatar.jpg`;
+      const { error: uploadError } = await sb.storage
+        .from('avatars')
+        .upload(path, blob, { upsert: true, contentType: 'image/jpeg' });
+      if (uploadError) { toast('Upload failed: ' + uploadError.message); btn.disabled = false; btn.textContent = 'Save photo'; return; }
+      const { data: urlData } = sb.storage.from('avatars').getPublicUrl(path);
+      const avatarUrl = urlData.publicUrl + '?t=' + Date.now();
+      const { error: updateError } = await sb.from('profiles').update({ avatar_url: avatarUrl }).eq('id', currentUser.id);
+      if (updateError) { toast('Could not save avatar.'); btn.disabled = false; btn.textContent = 'Save photo'; return; }
+      currentProfile.avatar_url = avatarUrl;
+      const display = document.getElementById('avatar-display');
+      if (display) {
+        display.innerHTML = `<img src="${avatarUrl}" style="width:100%;height:100%;object-fit:cover;border-radius:50%"/><div style="position:absolute;bottom:0;left:0;right:0;background:rgba(0,0,0,0.5);font-size:9px;color:#fff;text-align:center;padding:3px 0">Edit</div>`;
+      }
+      updateNavAvatar();
+      closeCropper();
+      toast('Profile picture updated!');
+    } catch (err) {
+      console.error(err);
+      toast('Something went wrong. Try again.');
+      btn.disabled = false;
+      btn.textContent = 'Save photo';
+    }
+  }, 'image/jpeg', 0.92);
+}
+
+/* ── DRAG EVENTS ── */
+const cropWrap = document.getElementById('crop-wrap');
+
+cropWrap.addEventListener('mousedown', (e) => {
+  isDragging = true;
+  dragStartX = e.clientX; dragStartY = e.clientY;
+  imgStartX = cropX; imgStartY = cropY;
+  e.preventDefault();
+});
+
+cropWrap.addEventListener('touchstart', (e) => {
+  isDragging = true;
+  dragStartX = e.touches[0].clientX; dragStartY = e.touches[0].clientY;
+  imgStartX = cropX; imgStartY = cropY;
+}, { passive: true });
+
+document.addEventListener('mousemove', (e) => {
+  if (!isDragging) return;
+  cropX = imgStartX + (e.clientX - dragStartX);
+  cropY = imgStartY + (e.clientY - dragStartY);
+  drawCrop();
+});
+
+document.addEventListener('touchmove', (e) => {
+  if (!isDragging) return;
+  cropX = imgStartX + (e.touches[0].clientX - dragStartX);
+  cropY = imgStartY + (e.touches[0].clientY - dragStartY);
+  drawCrop();
+}, { passive: true });
+
+document.addEventListener('mouseup', () => { isDragging = false; });
+document.addEventListener('touchend', () => { isDragging = false; });
+
+/* ── PROFILE ── */
 async function init() {
   const auth = await requireAuth();
   if (!auth) return;
-  currentUser    = auth.user;
+  currentUser = auth.user;
   currentProfile = auth.profile;
-  document.getElementById('nav-avatar').textContent = (currentProfile?.username || '?').slice(0,2).toUpperCase();
+  updateNavAvatar();
   renderProfile();
   loadQuizHistory();
+}
+
+function updateNavAvatar() {
+  const el = document.getElementById('nav-avatar');
+  if (!el) return;
+  if (currentProfile?.avatar_url) {
+    el.innerHTML = `<img src="${currentProfile.avatar_url}" style="width:100%;height:100%;object-fit:cover;border-radius:50%"/>`;
+    el.style.padding = '0';
+  } else {
+    el.textContent = (currentProfile?.username || '?').slice(0, 2).toUpperCase();
+    el.style.padding = '';
+  }
 }
 
 function renderProfile() {
   const p = currentProfile;
   if (!p) return;
-  const watched = p.total_watched  || 0;
-  const streak  = p.streak_count   || 0;
-  const stars   = p.stars_earned   || 0;
-  const rank    = getRank(watched);
-  const joined  = new Date(p.joined_date || Date.now()).toLocaleDateString('en-GB', { month: 'long', year: 'numeric' });
-  const initials = p.username.slice(0,2).toUpperCase();
+  const watched  = p.total_watched || 0;
+  const streak   = p.streak_count  || 0;
+  const stars    = p.stars_earned  || 0;
+  const rank     = getRank(watched);
+  const joined   = new Date(p.joined_date || Date.now()).toLocaleDateString('en-GB', { month: 'long', year: 'numeric' });
+  const initials = p.username.slice(0, 2).toUpperCase();
+  const avatarHtml = p.avatar_url
+    ? `<img src="${p.avatar_url}" style="width:100%;height:100%;object-fit:cover;border-radius:50%"/>`
+    : initials;
 
-const days = ['Mon','Tue','Wed','Thu','Fri','Sat','Sun'];
-const today = new Date();
-const todayIdx = today.getDay() === 0 ? 6 : today.getDay() - 1;
-const lastWatched = p.last_watched_date ? new Date(p.last_watched_date) : null;
+  const days = ['Mon','Tue','Wed','Thu','Fri','Sat','Sun'];
+  const today = new Date();
+  const todayIdx = today.getDay() === 0 ? 6 : today.getDay() - 1;
+  const lastWatched = p.last_watched_date ? new Date(p.last_watched_date) : null;
 
-
-const streakDots = days.map((d, i) => {
-  let cls = '';
-  if (i === todayIdx && lastWatched) {
-    const lastStr = lastWatched.toISOString().split('T')[0];
-    const todayStr = today.toISOString().split('T')[0];
-    cls = lastStr === todayStr ? 'today' : '';
-  } else if (i < todayIdx) {
-    const dayDate = new Date(today);
-    dayDate.setDate(today.getDate() - (todayIdx - i));
-    const dayStr = dayDate.toISOString().split('T')[0];
-    const lastStr = lastWatched ? lastWatched.toISOString().split('T')[0] : null;
-    const diffDays = todayIdx - i;
-    cls = lastWatched && diffDays <= streak ? 'done' : '';
-  }
-  const check = cls === 'today'
-    ? `<svg width="12" height="12" viewBox="0 0 12 12" fill="none"><polyline points="2,6 5,9 10,3" stroke="#fff" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"/></svg>`
-    : cls === 'done'
-    ? `<svg width="12" height="12" viewBox="0 0 12 12" fill="none"><polyline points="2,6 5,9 10,3" stroke="#C0392B" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"/></svg>`
-    : '';
-  return `<div class="streak-day">
-    <div class="streak-dot ${cls}">${check}</div>
-    <div class="streak-day-label${cls === 'today' ? ' today-label-day' : ''}">${d}</div>
-  </div>`;
-}).join('');
+  const streakDots = days.map((d, i) => {
+    let cls = '';
+    if (i === todayIdx && lastWatched) {
+      cls = lastWatched.toISOString().split('T')[0] === today.toISOString().split('T')[0] ? 'today' : '';
+    } else if (i < todayIdx) {
+      cls = lastWatched && (todayIdx - i) <= p.streak_count ? 'done' : '';
+    }
+    const check = cls === 'today'
+      ? `<svg width="12" height="12" viewBox="0 0 12 12" fill="none"><polyline points="2,6 5,9 10,3" stroke="#fff" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"/></svg>`
+      : cls === 'done'
+      ? `<svg width="12" height="12" viewBox="0 0 12 12" fill="none"><polyline points="2,6 5,9 10,3" stroke="#C0392B" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"/></svg>`
+      : '';
+    return `<div class="streak-day"><div class="streak-dot ${cls}">${check}</div><div class="streak-day-label${cls==='today'?' today-label-day':''}">${d}</div></div>`;
+  }).join('');
 
   const rankDefs = [
     {name:'Newbie',min:0,max:9},{name:'Movie Watcher',min:10,max:19},
@@ -102,8 +249,8 @@ const streakDots = days.map((d, i) => {
   ];
   const rankListHtml = rankDefs.map((r,i) => {
     let barCls='rank-bar', nameCls='rank-name', w='0%';
-    if (watched > r.max)     { barCls='rank-bar done';    nameCls='rank-name done';    w='100%'; }
-    else if (watched >= r.min){ barCls='rank-bar current'; nameCls='rank-name current'; w=Math.round(((watched-r.min)/(r.max-r.min+1))*100)+'%'; }
+    if(watched>r.max){barCls='rank-bar done';nameCls='rank-name done';w='100%';}
+    else if(watched>=r.min){barCls='rank-bar current';nameCls='rank-name current';w=Math.round(((watched-r.min)/(r.max-r.min+1))*100)+'%';}
     return `<div class="rank-item"><span class="rank-n">${i+1}</span><div class="rank-bar-wrap"><div class="${barCls}" style="width:${w}"></div></div><span class="${nameCls}">${r.name}</span><span class="rank-movies">${r.min===100?'100+':r.min===0?'1–9':r.min}</span></div>`;
   }).join('');
   const next = rankDefs.find(r => watched < r.min);
@@ -111,13 +258,10 @@ const streakDots = days.map((d, i) => {
   document.getElementById('pane-profile').innerHTML = `
   <div class="profile-hero">
     <div class="profile-top">
-      <div class="avatar-lg" id="profile-avatar" onclick="document.getElementById('avatar-input').click()" style="cursor:pointer;overflow:hidden;position:relative">
-  ${p.avatar_url
-    ? `<img src="${p.avatar_url}" style="width:100%;height:100%;object-fit:cover;border-radius:50%"/>`
-    : initials}
-  <div style="position:absolute;bottom:0;left:0;right:0;background:rgba(0,0,0,0.5);font-size:9px;text-align:center;padding:3px;color:#fff">Edit</div>
-</div>
-<input type="file" id="avatar-input" accept="image/*" style="display:none" onchange="uploadAvatar(event)"/>
+      <div class="avatar-lg" id="avatar-display" onclick="document.getElementById('avatar-input').click()" style="cursor:pointer;overflow:hidden;position:relative">
+        ${avatarHtml}
+        <div style="position:absolute;bottom:0;left:0;right:0;background:rgba(0,0,0,0.5);font-size:9px;color:#fff;text-align:center;padding:3px 0">Edit</div>
+      </div>
       <div>
         <div class="profile-name">${escHtml(p.username)}</div>
         <div class="profile-join">Member since ${joined}</div>
@@ -130,19 +274,16 @@ const streakDots = days.map((d, i) => {
       <div class="stat-card"><div class="stat-val">${stars}</div><div class="stat-label">Stars earned</div></div>
     </div>
   </div>
-
   <div class="block">
     <div class="block-title">This week's streak</div>
     <div class="streak-row">${streakDots}</div>
     <div class="streak-count"><span class="streak-num">${streak}</span><span class="streak-text">day streak — keep it going</span></div>
   </div>
-
   <div class="block">
     <div class="block-title">Rank journey</div>
     <div class="rank-list">${rankListHtml}</div>
-    ${next ? `<div class="rank-next">${next.min - watched} more films to reach <span style="color:var(--red)">${next.name}</span></div>` : '<div class="rank-next" style="color:var(--gold)">You have reached the highest rank — Cinéaste!</div>'}
+    ${next?`<div class="rank-next">${next.min-watched} more films to reach <span style="color:var(--red)">${next.name}</span></div>`:`<div class="rank-next" style="color:var(--gold)">You have reached the highest rank — Cinéaste!</div>`}
   </div>
-
   <button class="action-btn" style="width:100%;margin-bottom:10px" onclick="shareProfile()">Share my profile</button>
   <button class="action-btn" style="width:100%;color:#eb5757;border-color:#7d2e2e" onclick="doLogout()">Sign out</button>`;
 }
@@ -154,7 +295,6 @@ async function loadQuizHistory() {
     .eq('user_id', currentUser.id)
     .order('created_at', { ascending: false })
     .limit(30);
-
   const pane = document.getElementById('pane-history');
   if (!data || data.length === 0) {
     pane.innerHTML = `<div class="no-comments" style="padding:40px 0">No quiz results yet — finish today's film to get started!</div>`;
@@ -162,27 +302,16 @@ async function loadQuizHistory() {
   }
   const starMovies = data.filter(r => r.perfect);
   pane.innerHTML = `
-  ${starMovies.length ? `
-  <div class="block">
-    <div class="block-title">Stars earned</div>
-    <div class="stars-grid">${starMovies.map(r => `<div class="star-chip">★ ${escHtml(r.movies?.title||'')}</div>`).join('')}</div>
-  </div>` : ''}
-  <div class="block">
-    <div class="block-title">All quiz results</div>
-    ${data.map(r => `<div class="rank-item">
-      <div style="flex:1;font-size:13px;color:var(--text)">${escHtml(r.movies?.title||'Unknown')}</div>
-      <div style="font-size:13px;font-weight:500;color:${r.perfect?'var(--gold)':r.score>=3?'#6fcf97':'var(--text-hint)'}">${r.score}/5${r.perfect?' ★':''}</div>
-    </div>`).join('')}
+  ${starMovies.length?`<div class="block"><div class="block-title">Stars earned</div><div class="stars-grid">${starMovies.map(r=>`<div class="star-chip">★ ${escHtml(r.movies?.title||'')}</div>`).join('')}</div></div>`:''}
+  <div class="block"><div class="block-title">All quiz results</div>
+  ${data.map(r=>`<div class="rank-item"><div style="flex:1;font-size:13px;color:var(--text)">${escHtml(r.movies?.title||'Unknown')}</div><div style="font-size:13px;font-weight:500;color:${r.perfect?'var(--gold)':r.score>=3?'#6fcf97':'var(--text-hint)'}">${r.score}/5${r.perfect?' ★':''}</div></div>`).join('')}
   </div>`;
 }
 
 function shareProfile() {
-  if (navigator.share) {
-    navigator.share({ title: 'MOVIEZ', text: `Check out my MOVIEZ profile — I'm a ${getRank(currentProfile?.total_watched||0)}!`, url: window.location.href });
-  } else {
-    navigator.clipboard.writeText(window.location.href);
-    toast('Link copied!');
-  }
+  const text = `Check out my MOVIEZ profile — I'm a ${getRank(currentProfile?.total_watched||0)}!`;
+  if (navigator.share) { navigator.share({ title:'MOVIEZ', text, url: window.location.href }); }
+  else { navigator.clipboard.writeText(window.location.href); toast('Link copied!'); }
 }
 
 async function doLogout() {
@@ -198,37 +327,6 @@ function switchTab(name, el) {
   document.getElementById('pane-' + name).classList.add('active');
 }
 
-async function uploadAvatar(input) {
-  const file = input.files[0];
-  if (!file) return;
-  if (file.size > 2 * 1024 * 1024) { toast('Image must be under 2MB.'); return; }
-
-  toast('Uploading...');
-  const ext = file.name.split('.').pop();
-  const path = `${currentUser.id}/avatar.${ext}`;
-
-  const { error: uploadError } = await sb.storage
-    .from('avatars')
-    .upload(path, file, { upsert: true });
-
-  if (uploadError) { toast('Upload failed. Try again.'); return; }
-
-  const { data: urlData } = sb.storage.from('avatars').getPublicUrl(path);
-  const avatarUrl = urlData.publicUrl + '?t=' + Date.now();
-
-  await sb.from('profiles').update({ avatar_url: avatarUrl }).eq('id', currentUser.id);
-  currentProfile.avatar_url = avatarUrl;
-
-  const display = document.getElementById('avatar-display');
-  if (display) {
-    display.innerHTML = `
-      <img src="${avatarUrl}" style="width:100%;height:100%;object-fit:cover;border-radius:50%"/>
-      <div style="position:absolute;bottom:0;left:0;right:0;background:rgba(0,0,0,0.5);font-size:9px;color:#fff;text-align:center;padding:3px 0">Edit</div>`;
-  }
-
-  toast('Profile picture updated!');
-}
-  
 init();
 </script>
 </body>
